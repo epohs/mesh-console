@@ -1,0 +1,49 @@
+# macOS
+__MACOSX/
+.DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+
+# Logs
+*.log
+
+
+# SQLite (this project never writes one, but a snapshot may be copied in)
+*.db
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.bak
+
+
+# Deployment config file
+config.json
+
+
+# Environments
+.env
+.envrc
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+
+#VSCode
+.vscode/

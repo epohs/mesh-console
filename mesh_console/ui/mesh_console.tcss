@@ -1,0 +1,1015 @@
+/* Mesh Console — layout and colours.
+ *
+ * Kept out of the Python for the same reason RxOnly keeps rxonly.css out of its
+ * templates.
+ *
+ * **Colours are this suite's palette, not Textual's.** They come from
+ * mesh_console/ui/theme.py, which carries RxOnly's own web palette converted out
+ * of oklch() — so `$rx-text-muted` here is `--color-text-muted` there, same
+ * value. The two interfaces show one archive and are meant to look like it.
+ * `$rx-*` is the palette; the plain Textual tokens ($surface, $block-cursor-*)
+ * are the ones it is right to let the framework derive.
+ *
+ * Vertical space follows the same source. RxOnly's sidebar sets
+ * `gap: var(--space-lg)` between its channels panel and its nodes panel and
+ * `margin-bottom: var(--space-sm)` under the node search box; a terminal's unit
+ * is one row, so the largest of those gaps is one blank row and the smaller ones
+ * are the same row spent where the web spends 0.5rem.
+ */
+
+Screen {
+  layers: base;
+}
+
+
+/* -------------------------------------------------
+   Top bars
+   ------------------------------------------------- */
+
+/* $rx-bg-app for the text rather than a fixed near-white: it inverts with the
+ * theme, so this stays dark-on-red in the dark palette and light-on-red in the
+ * light one without a second rule.
+ */
+
+#connection-error {
+  display: none;
+  background: $rx-error;
+  color: $rx-bg-app;
+  text-style: bold;
+  padding: 0 1;
+}
+
+#connection-error.visible {
+  display: block;
+}
+
+/* A rule, not a band. RxOnly's `.device-bar` fills itself with
+ * `--color-bg-below-surface` and this used to do the same, which Jason found clunky:
+ * a filled band is the heaviest thing this interface can put at the top of the
+ * screen, and all it has to do is separate the chrome from the rest.
+ *
+ * So the separation moves to a line, and the line is the one already on screen —
+ * `$rx-bg-surface-alt`, the same colour and the same `solid` as `#sidebar`'s
+ * `border-right`. The two edges that divide this layout now match, which is a thing
+ * the band was hiding rather than doing.
+ *
+ * The device name is bold and the rest of the line is not; that half is in
+ * `update_device_bar`, which builds the bar span by span because a device name comes
+ * off the mesh and this project renders those with markup off.
+ */
+
+#device-bar {
+  background: transparent;
+  border-bottom: solid $rx-bg-surface-alt;
+  color: $rx-text-secondary;
+  padding: 0 1;
+
+  /* The device name is the way back to the dashboard, and — like RxOnly's
+   * `.device-bar-home`, which is `color: inherit; text-decoration: none` — it does
+   * not announce that until you point at it. `link-color` matching the bar's own
+   * text is how a Textual link says "inherit": a heading that turned link-coloured
+   * would read as a link first and a heading second, which is the wrong way round
+   * for the largest thing on the screen.
+   */
+  link-color: $rx-text-secondary;
+  link-style: none;
+  link-color-hover: $rx-text-primary;
+  link-background-hover: $rx-bg-app;
+  link-style-hover: underline;
+}
+
+
+/* -------------------------------------------------
+   Sidebar: channels above, nodes below
+   ------------------------------------------------- */
+
+#body {
+  height: 1fr;
+}
+
+/* The divider takes the colour RxOnly gives its borders — the same
+ * `--color-bg-surface-alt` that separates the rows of a node detail table. It was
+ * $primary, which made the sidebar edge the most saturated line on the screen.
+ *
+ * `padding-top` is RxOnly's `.sidebar { padding-top: var(--space-md) }`, and its
+ * twin on `#main` below is `.main-content`'s. Both columns start a row below the
+ * device bar rather than against it, in both interfaces.
+ */
+
+#sidebar {
+  width: 34;
+  min-width: 24;
+  padding-top: 1;
+  border-right: solid $rx-bg-surface-alt;
+}
+
+/* RxOnly's panel headings are secondary-coloured text at weight 500 over the page
+ * background, with no band behind them. The band this used to have was doing the
+ * job of separating the two panels; the blank row above the Nodes heading does it
+ * now, which is how the web does it too.
+ */
+
+.panel-heading {
+  background: transparent;
+  color: $rx-text-secondary;
+  text-style: bold;
+  padding: 0 1;
+  margin-bottom: 1;
+  width: 100%;
+}
+
+/* Capped where RxOnly caps it: `max-height: calc(5 * 2.25rem)` on
+ * `.channels-list`, five rows and then it scrolls. It was 40% of the sidebar,
+ * which on a tall terminal let the channel list take half the screen from the
+ * node list — the opposite of the web's proportions.
+ */
+
+/* Five channels before it scrolls, which is RxOnly's
+ * `.channels-list { max-height: calc(5 * 2.25rem) }` — five rows at one row's
+ * height. A row here is two lines: its text, and the line of padding under it. This
+ * tracks the row padding: change one and this is the other.
+ */
+
+#channels {
+  height: auto;
+  max-height: 10;
+}
+
+/* Every list in this interface gives up its scrollbar.
+ *
+ * A vertical scrollbar takes two columns out of the *content* of the list it
+ * belongs to — the list keeps its width, its rows lose two — and only a list long
+ * enough to need one pays. So the node rows stopped short of the divider while the
+ * channel rows ran up to it. Reserving the gutter in both would have matched them
+ * by making the channel rows narrower; this matches them at the full width, which
+ * is the one that was asked for.
+ *
+ * Nothing is lost that this interface was relying on: the cursor is how you move
+ * through these lists and the wheel still scrolls them. **The wheel also pages the
+ * node list now**, which is the part that was missing while this rule stood alone —
+ * see `nodes_scrolled`. A hidden scrollbar makes the wheel the way a mouse moves down
+ * this list, and until that watcher existed the wheel could reach the end of the
+ * loaded page and fetch nothing. The heading stood in for the missing thumb for a
+ * while, reporting `Nodes (50 of 82)`; it reports the archive's own total now,
+ * because "x of n" reads as a filter and there was none.
+ *
+ * **The message list held out longest and is here now, Jason's.** The reason it kept
+ * its scrollbar was that it has no divider to line up against and its rows are many
+ * lines tall — neither of which is an argument for a gutter, only the absence of the
+ * argument against one. What it costs is two columns of every message and the only
+ * mark of where in a channel you are; what stands in for the second is the status
+ * line, which says `Newer messages below — press g to jump to newest` and says it in
+ * words. The message list since gained its own watcher after all — `messages_scrolled`
+ * — when reading moved off the cursor and onto the scroll position, so the wheel
+ * both reads and pages there now.
+ */
+
+#channels, #nodes, #messages {
+  scrollbar-size-vertical: 0;
+}
+
+/* A column of breathing room inside every row, which is RxOnly's
+ * `.channel-link, .node-link { padding: var(--space-xs) var(--space-sm) }` — the
+ * horizontal half of it, since a row here is one line tall and the vertical half
+ * would be a blank line between every entry.
+ *
+ * Padding rather than margin, so the background — the stripe, and the cursor —
+ * still runs the full width of the list and only the text is inset. `ListItem`
+ * catches the two row widgets and the "No nodes" placeholder alike.
+ */
+
+/* Half a line of vertical padding is not a thing a terminal can draw — a cell is
+ * the smallest unit there is — so the way to halve it is to put the whole line on
+ * one side. One blank line per row instead of two.
+ *
+ * Below rather than above, for two reasons: the heading already places a deliberate
+ * gap above the first row and top padding would double it, and the shading runs
+ * through the padding, so a row reads as its text with its own breathing room under
+ * it rather than as a gap that belongs to the row above.
+ */
+
+#channels > ListItem,
+#nodes > ListItem {
+  padding: 0 1 1 1;
+}
+
+/* When a node was last heard, under its name — RxOnly's `.node-last-seen`, which is
+ * `font-size: 0.8em` *and* `--color-text-muted`. A terminal has one type size, so
+ * the colour carries the whole distinction on its own.
+ */
+
+#nodes > NodeItem .node-last-seen {
+  color: $rx-text-muted;
+}
+
+/* The gap Jason asked for, and the one the web already had: `gap: var(--space-lg)`
+ * between the two sidebar panels is the largest space in that column, so it is
+ * the one that gets the terminal's whole row.
+ */
+
+#nodes-heading {
+  margin-top: 1;
+}
+
+#nodes {
+  height: 1fr;
+}
+
+/* A channel with something waiting in it. The count in the label is the part
+ * that survives a monochrome terminal, the way "You (BASE)" is for an outbound
+ * message; this is the second cue, not the only one.
+ */
+
+ChannelItem.unread {
+  text-style: bold;
+}
+
+/* Channels are `--color-accent-channel` and nodes are `--color-accent-node` in
+ * RxOnly — `.channel-link` and `.node-link` — and they are here for the same
+ * reason: the two lists hold different kinds of thing and the colour says which
+ * before the content does.
+ *
+ * Addressed by id because Textual sets `color` on `ListView > ListItem`, which
+ * outranks a bare type selector; the id outranks that in turn. Which is also why
+ * the highlight needs saying again below — an id beats the `.-highlight` rule
+ * that would otherwise keep the cursor row readable.
+ */
+
+#channels > ChannelItem {
+  color: $rx-accent-channel;
+}
+
+#nodes > NodeItem {
+  color: $rx-accent-node;
+}
+
+/* Alternating row shading, the same 25% of `--color-bg-surface-alt` over whatever is
+ * beneath that RxOnly mixes for `.channels-list li:nth-child(odd)` and its nodes
+ * twin. Textual has no `nth-child`, so which rows are shaded is decided where the
+ * rows are built — see `striped()` in widgets.py — and this rule only says what the
+ * shading is. A percentage on a background is Textual's own way of writing
+ * `color-mix(…, transparent)`, so the two stylesheets say the same thing.
+ *
+ * Class-only on purpose: it has to catch the "No nodes" placeholder as well as the
+ * two row widgets, and all three are the odd first row when they are alone.
+ */
+
+#channels > .stripe,
+#nodes > .stripe {
+  background: $rx-bg-surface-alt 25%;
+}
+
+/* The cursor row, which has to be said after the stripe and outrank it.
+ *
+ * Both of these exist because the id selectors above outrank what Textual's own
+ * `.-highlight` rules would have done. Getting the background back is the new half:
+ * without it a shaded row under the cursor keeps its stripe and the cursor
+ * disappears on every other row. The type selector is what wins — `> .stripe`
+ * names no type, so `> ChannelItem.-highlight` beats it.
+ *
+ * `$rx-on-accent` is dark in both palettes on purpose: the cursor's background is
+ * `--color-link`, which the web defines identically in its light and dark themes, so
+ * what sits on it does not invert either.
+ */
+
+/* **"You are here", and it is not the cursor.** Both of these lists keep a cursor and
+ * Textual paints every cursor, so a channel stayed lit while you walked the nodes, a
+ * node stayed lit once you were back in a channel, and the dashboard — which has no
+ * sidebar entry — inherited both.
+ *
+ * The first fix gated that paint on which *list* described the open view, and it was
+ * not enough: the cursor still moved. Arrow through the channels without opening one
+ * and the lit row came with you, still claiming to be what the main pane was showing.
+ *
+ * So the two questions have two marks now. `current` is put on the row that matches
+ * the open view by `update_sidebar_current`, and moves only when you open something.
+ * `-highlight` is Textual's cursor and is painted below only while its list has
+ * focus, because "where will the arrow keys go" is worth answering exactly then. A
+ * focused list can show both at once, on two different rows, and that is correct:
+ * they are two different facts.
+ */
+
+/* And nothing at all on an unfocused list's cursor row — which means putting back
+ * what that row would have looked like unhighlighted, because Textual's own
+ * `ListView > ListItem.-highlight` still matches and would otherwise paint it. A
+ * striped row keeps its stripe; the rest keep the background they never had.
+ *
+ * Ordered before `.current` above would be wrong and after it is right: a row that is
+ * both the open view and the resting cursor has to stay lit.
+ */
+
+#channels > ChannelItem.-highlight,
+#nodes > NodeItem.-highlight {
+  background: transparent;
+}
+
+#channels > ChannelItem.-highlight.stripe,
+#nodes > NodeItem.-highlight.stripe {
+  background: $rx-bg-surface-alt 25%;
+}
+
+/* Every combination spelled out, because the reset above is more specific than a
+ * bare `.current` and would otherwise win on the commonest row of all: the one you
+ * opened, which is usually also where the cursor was left. Textual resolves these
+ * the way CSS does — more classes, higher specificity — so the row that is current
+ * *and* the cursor *and* striped needs to say all three.
+ */
+
+#channels > ChannelItem.current,
+#nodes > NodeItem.current,
+#channels > ChannelItem.-highlight.current,
+#nodes > NodeItem.-highlight.current,
+#channels > ChannelItem.-highlight.stripe.current,
+#nodes > NodeItem.-highlight.stripe.current,
+#channels > ChannelItem.stripe.current,
+#nodes > NodeItem.stripe.current {
+  background: $block-cursor-blurred-background;
+}
+
+
+/* `:focus` is load-bearing rather than tidy. An unfocused list draws its cursor as
+ * a 30% tint of that same blue, which over the surface is a dark bar — and dark text
+ * on it would be invisible. So the accent colour is left alone there, which is also
+ * the answer that keeps a channel looking like a channel when the cursor is
+ * somewhere else.
+ */
+
+#channels:focus > ChannelItem.-highlight,
+#nodes:focus > NodeItem.-highlight {
+  background: $block-cursor-background;
+  color: $rx-on-accent;
+}
+
+/* Filters the list below it, and looks like it does. Borderless, because a
+ * bordered input three rows tall in a 34-column sidebar costs more than it says —
+ * so the focus cue RxOnly puts in its border colour goes into the background here
+ * instead. The unfocused background is `--color-bg-app`, which is what
+ * `.nodes-search-input` takes: a well cut into the surface rather than a raised
+ * thing on it.
+ */
+
+/* The inset is `padding`, not `margin`, and that distinction is load-bearing here:
+ * a horizontal margin on this widget takes two columns off the width the *node list
+ * below it* is given, so the rows stop short of the divider while the channel rows
+ * do not. Padding insets the text without touching what the siblings get, which is
+ * the same look for none of the cost.
+ */
+
+#node-filter {
+  height: 1;
+  border: none;
+  padding: 0 1;
+  margin: 0 0 1 0;
+  background: $rx-bg-app;
+  color: $rx-text-primary;
+}
+
+#node-filter:focus {
+  background: $rx-bg-surface-alt;
+}
+
+#node-filter > .input--placeholder {
+  color: $rx-text-muted;
+}
+
+
+/* -------------------------------------------------
+   Main pane: the dashboard, or one channel's messages
+   ------------------------------------------------- */
+
+#main {
+  width: 1fr;
+  padding-top: 1;
+}
+
+/* Where you are, for the two views that have no sidebar entry highlighted.
+ *
+ * No band behind it — it is a label, and the row it occupies is enough to separate
+ * it from the pane below. The parts are styled separately through the component
+ * classes below, which is why `Breadcrumbs` exists as a widget: the trail can
+ * contain a channel name off the mesh, so it is built as spans rather than as a
+ * marked-up string.
+ */
+
+/* The colour here is `.breadcrumbs li`'s, and it is what the *current* crumb takes:
+ * the step naming where you already are is not a link and must not look like one.
+ * Every other step is, and takes the `link-*` properties below.
+ */
+
+#breadcrumbs {
+  background: transparent;
+  color: $rx-text-secondary;
+  padding: 0 1;
+
+  /* A crumb you can click, in RxOnly's `.breadcrumbs a` colour — and its
+   * `:hover`, which is the half that matters. On the web a cursor changes shape over
+   * a link and that is the affordance; a terminal has no reliable equivalent, so the
+   * hover treatment is the only thing that says a crumb is a control before it is
+   * pressed. Which crumbs get these is decided in `Breadcrumbs.set_trail`: a span
+   * carrying `@click` is a link as far as Textual is concerned, and nothing else is.
+   */
+  link-color: $rx-link;
+  link-style: none;
+  link-color-hover: $rx-on-accent;
+  link-background-hover: $rx-link;
+  link-style-hover: underline;
+}
+
+/* `.breadcrumbs li:not(:last-child)::after` is `--color-text-muted` on the web, and
+ * the separator recedes here for the same reason: it is punctuation, not a step.
+ */
+
+#breadcrumbs > .breadcrumbs--separator {
+  color: $rx-text-muted;
+}
+
+#dashboard-pane {
+  height: 1fr;
+  padding: 1 2;
+}
+
+/* A row below the trail, which is what the other two panes already had and this
+ * one did not. `#dashboard-pane` and `#detail-pane` get it out of their own
+ * `padding-top`, standing in for RxOnly's `.main-content { padding-top: space-md }`;
+ * a ListView has no padding of its own to spend, so the message list sat flush
+ * against the breadcrumbs while its two siblings did not.
+ *
+ * `margin` rather than `padding`, so the gap shows #main's background rather than
+ * the list's own `$surface` — the blank row belongs between the trail and the list
+ * rather than to either of them. On the web the same gap is the breadcrumbs' own
+ * `padding-bottom: var(--space-sm)`, which a terminal cannot spend half a row on.
+ */
+
+/* **The same background as the dashboard, which means none of its own.** Jason's,
+ * and there were two things lifting this panel off the page rather than one.
+ * `ListView` sets `background: $surface`, which is a step above `--color-bg-app`;
+ * and `ListView:focus` adds `background-tint: $foreground 5%`, a wash of the teal
+ * text colour over the whole widget. Together they painted #130F0B where the
+ * dashboard pane paints #0D0600 — the tint being the larger half, and the reason
+ * this looked like a panel with a colour rather than a list on a page.
+ *
+ * Both are turned off rather than restated as `$rx-bg-app`, so this pane keeps
+ * showing whatever is behind it the way `#dashboard-pane` and `#detail-pane` do.
+ * The rows are unaffected: a stripe, a cursor and an unread accent all paint
+ * themselves, and none of them was reading the panel's colour.
+ *
+ * The two sidebar lists keep theirs. They are a column of their own with a divider
+ * to prove it, and their stripes are mixed against the surface they sit on.
+ */
+
+#messages {
+  height: 1fr;
+  margin-top: 1;
+  background: transparent;
+  background-tint: transparent;
+}
+
+/* One node or one message, in full. Scrolls, because a node with a position
+ * and a message with its text can both outrun a short terminal.
+ */
+
+#detail-pane {
+  display: none;
+  height: 1fr;
+  padding: 1 2;
+}
+
+/* The map link. `link-*` rather than anything on the span itself: a span carrying a
+ * `@click` is a link to Textual, so these are the properties it actually consults,
+ * and they are the only way to get the hover treatment — which is what tells you
+ * the thing is clickable before you click it.
+ */
+
+#detail {
+  link-color: $rx-link;
+  link-style: underline;
+  link-color-hover: $rx-on-accent;
+  link-background-hover: $rx-link;
+  link-style-hover: underline;
+}
+
+/* A field's label, in the breadcrumb colour — `--color-link`. RxOnly's own detail
+ * table does the same job with `.dashboard-table th`, which is
+ * `--color-text-secondary`; this takes the brighter one because a terminal has no
+ * column rule to separate a label from its value, so the colour is the separation.
+ * The values keep the pane's own colour.
+ */
+
+#detail > .detail--label {
+  color: $rx-link;
+}
+
+#messages-status {
+  display: none;
+  background: $rx-bg-surface-alt;
+  color: $rx-text-muted;
+  padding: 0 1;
+}
+
+#messages-status.visible {
+  display: block;
+}
+
+
+/* -------------------------------------------------
+   A single message
+   ------------------------------------------------- */
+
+/* One blank row between messages, which the web has too: `.messages-list` sets
+ * `gap: calc(var(--space-md) - (var(--space-sm) / 2))` between its items, and a
+ * terminal's unit is one row.
+ *
+ * `margin-bottom` rather than the `padding-bottom` the sidebar rows use, and the
+ * difference is visible: a gap outside the row is not part of either message, so
+ * neither the cursor's background below nor the outbound accent bar runs through
+ * it. On the web the same gap is the list's `gap` rather than the card's padding,
+ * for the same reason — `.message-item` carries its own background and the space
+ * between two of them shows the page through.
+ */
+
+MessageItem {
+  padding: 0 1 0 0;
+  height: auto;
+  margin-bottom: 1;
+  /* Reserved on every row, and invisible until something claims it. A border that
+   * only existed on the row that had it would push that row's text sideways as the
+   * selection passed, which is the one thing a marker must not do. `transparent`
+   * lets the row's own background through, so the column is simply empty.
+   *
+   * The edge is free because the outbound accent bar left it — see
+   * `MessageHeader > .message-header--node-outbound`. It is the whole of what the
+   * selection and an unread direct message have to work with, which is why those
+   * two have to agree about who wins. */
+  border-left: thick transparent;
+}
+
+/* The selected row: an edge, not a band, and absent until a key asks for one.
+ *
+ * **Nothing is selected when a channel opens.** Reading is scrolling now — see
+ * `mark_read_from_viewport` — so a row under a cursor no longer means "read to
+ * here", and a highlight sitting on an arbitrary row claimed a choice the reader
+ * had not made. The first `up` or `down` puts the mark on the newest message the
+ * viewport has already carried past its read line, and from there it moves the way
+ * a cursor moves. `escape` out of the channel takes it away again.
+ *
+ * The colour is the band's, which is what this was before: `$rx-bg-below-surface`,
+ * the one entry in this palette a deliberately equal step from the page in both
+ * themes. As a *line* it has far less area than it had as a fill, so it is a
+ * quieter mark than the band was — deliberately, and one value here if it turns
+ * out to be too quiet.
+ *
+ * Two strengths, blurred and focused, which is the distinction the sidebar lists
+ * make with `$block-cursor-background` against its tint. It matters more here than
+ * it did: with no selection by default, this edge is the only thing on screen that
+ * says the keyboard is talking to the message list.
+ *
+ * **Not a background, and that reasoning still holds.** A message is several lines
+ * of header, reply bar, text and pills, each coloured against the page it sits on,
+ * and none of them was picked to sit on a lifted band. `$rx-text-primary` over the
+ * band was 1.74:1 dark and 1.54:1 light, against the 4.4:1 and 4.8:1 the same text
+ * gets over the page. An edge costs the text nothing.
+ */
+
+/* `background`, `color` and `text-style` are all restated because what is being
+ * replaced is Textual's own block cursor, which sets all three — leaving any of
+ * them out keeps the bold, or the saturated `$block-cursor-background`, under the
+ * edge that is supposed to be the whole of the mark.
+ */
+
+#messages > MessageItem.-highlight {
+  border-left: thick $rx-bg-below-surface 50%;
+  background: transparent;
+  color: $rx-text-primary;
+  text-style: none;
+}
+
+#messages:focus > MessageItem.-highlight {
+  border-left: thick $rx-bg-below-surface;
+  background: transparent;
+  color: $rx-text-primary;
+  text-style: none;
+}
+
+/* The header and the reply bar are `--color-text-muted`, which in this palette is
+ * a genuinely dim teal rather than a percentage of the foreground. That is the
+ * point: the metadata around a message should recede from its text the way it
+ * does on the web.
+ *
+ * The header is a `Horizontal` — RxOnly's `.message-header` is
+ * `display: flex; justify-content: space-between`, and this is the same two ends
+ * pushed apart by the same slack. `height: auto` because a `Horizontal` is `1fr`
+ * tall by default, which inside an auto-height `MessageItem` is a row asking to be
+ * as tall as a list it is a part of.
+ */
+
+.message-header {
+  height: auto;
+  width: 100%;
+}
+
+/* The sender takes the slack, so the timestamp lands on the right edge at every
+ * width. When there is more name than room the name is what gives — `text-wrap`
+ * and `text-overflow` here, and `no_wrap`/`overflow` on the `Text` itself, because
+ * the two paths render a Rich `Text` differently and only both together get an
+ * ellipsis rather than a second line.
+ */
+
+.message-identity {
+  width: 1fr;
+  color: $rx-text-muted;
+  text-wrap: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The one colour on this row that RxOnly also fixes: `.message-time` is
+ * `--color-text-muted` there whatever the message is, including one of yours.
+ */
+
+/* The `margin-left` is RxOnly's `gap: var(--space-md)` on the same flex row, and it
+ * only shows up at the width where it matters: a name long enough to be cut runs
+ * into the timestamp otherwise, and `…2/1 9:20 PM` reads as one field.
+ */
+
+.message-time {
+  width: auto;
+  margin-left: 2;
+  color: $rx-text-muted;
+}
+
+/* The node's yellow, reached as a component class because the name shares a label
+ * with the notes after it and only one of the two takes this colour. Same
+ * `$rx-accent-node` the sidebar, the conversation list and RxOnly's own
+ * `.message-from` all give a node name.
+ */
+
+MessageHeader > .message-header--node {
+  color: $rx-accent-node;
+}
+
+/* The quoted message this one answers, as a band rather than a line of italics.
+ *
+ * RxOnly gives it `background-color: color-mix(in oklch, var(--color-bg-surface-alt)
+ * 25%, transparent)` and pulls it out to the card's edges with negative margins, so
+ * it reads as a strip the message sits on top of rather than as the message's own
+ * first line. `$rx-bg-surface-alt 25%` is that colour; `width: 100%` is as far as the
+ * strip can go here, since the row's one column of padding is what keeps the accent
+ * bar off the text.
+ *
+ * One line, always. A reply bar that wrapped would be a quotation competing with the
+ * message quoting it — `format_reply_excerpt` already cuts at RxOnly's 120
+ * characters, and this cuts again at whatever the terminal is.
+ */
+
+.message-reply-bar {
+  width: 100%;
+  background: $rx-bg-surface-alt 25%;
+  color: $rx-text-muted;
+  text-wrap: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* **Every message's words are stepped one column in from the row naming its
+ * sender**, which is Jason's and is the second answer here. The first indented only
+ * a reply, on the reading that the step was what hung an answer off the quote above
+ * it — and a list where a few messages are inset and the rest are not reads as a
+ * rendering fault rather than as a distinction, which is what he saw in NCMesh. The
+ * step is for reading: it puts a message's text off the line its metadata starts on,
+ * so the eye has an edge to come back to down a channel.
+ *
+ * Padding rather than a space in the string, so the step is kept by every line the
+ * message wraps onto and not only by the first.
+ */
+
+.message-text {
+  width: 100%;
+  padding: 0 0 0 1;
+}
+
+/* Reactions to this message, gathered onto it rather than listed as messages of
+ * their own. Dimmer than the text they answer, because a tapback is a response to
+ * a message and not another one.
+ *
+ * **Right-aligned, which is RxOnly's placement**: `.tapback-container` is a flex
+ * row with `justify-content: flex-end`, pinned to the bottom of the card and inset
+ * from its right edge by `padding-right: var(--space-sm)`. The console had them
+ * indented from the left, where they read as a continuation of the message rather
+ * than as something stuck onto its corner.
+ */
+
+.message-tapbacks {
+  width: 100%;
+  color: $rx-text-muted;
+  text-align: right;
+  padding: 0 1 0 0;
+}
+
+
+/* A message this device sent, distinguished from one it received.
+ *
+ * **One cue now, and it is the sender's own name.** The row used to carry an accent
+ * bar down its left edge *and* the word `You` beside the name, on the argument that
+ * colour alone is not a distinction. Jason's call, having seen it: three marks for
+ * one fact, and the bar was spending the only margin there is on something the name
+ * itself can say. `MessageHeader` colours the name `$rx-outbound` instead of the
+ * usual node yellow, and adds a glyph after it on a session with no colour to read —
+ * see `MeshConsoleApp.monochrome`, which is why that is a detection and not a guess.
+ *
+ * `$rx-outbound` is one of the three colours the web palette has no counterpart for
+ * — RxOnly renders your own messages like anyone else's — so it is derived in the
+ * palette's own oklch family rather than borrowed, and it stays clear of the device
+ * bar, which is a different kind of statement about the same node.
+ */
+
+MessageHeader > .message-header--node-outbound {
+  color: $rx-outbound;
+}
+
+
+/* An inbound direct message that is still waiting.
+ *
+ * The left edge means "not read yet" here and nothing at all in a channel, which is
+ * Jason's and predates the bar leaving outbound rows: what is in doubt in a list of
+ * direct messages is which of them are waiting for you. It shares the edge with the
+ * selection now, and the selection wins while it is on the row — spelled out below
+ * rather than left to rule order, which Textual settles by specificity — because an
+ * unread row is about to stop being unread and the reader needs to know where they
+ * are more than what this row was a moment ago.
+ *
+ * **An outbound message never carries it**, and that is not an oversight: you were
+ * there when it went out. A conversation starts waiting for attention again when a
+ * reply arrives, and the reply is somebody else's message with its own accent.
+ */
+
+#messages.direct > MessageItem.unread {
+  border-left: thick $rx-outbound;
+}
+
+#messages.direct > MessageItem.unread.-highlight {
+  border-left: thick $rx-bg-below-surface 50%;
+}
+
+#messages.direct:focus > MessageItem.unread.-highlight {
+  border-left: thick $rx-bg-below-surface;
+}
+
+
+/* -------------------------------------------------
+   Composing a message
+   ------------------------------------------------- */
+
+/* Absent unless sending is configured, mesh-link is installed, a collector is
+ * answering, and a sendable channel is open. Hidden rather than disabled: an
+ * input you cannot use is a worse answer than no input.
+ *
+ * Focused, it takes `--color-accent-node` — the same colour RxOnly's own search
+ * input takes on focus, and the only place gold means "this is where the typing
+ * goes" in either interface.
+ */
+
+#compose {
+  display: none;
+  height: 3;
+  margin: 0 1;
+  border: round $rx-link;
+  background: $rx-bg-app;
+}
+
+#compose.available {
+  display: block;
+}
+
+#compose:focus {
+  border: round $rx-accent-node;
+}
+
+/* Over 233 bytes of UTF-8. The border says so as it happens rather than waiting
+ * for the send to be refused, and the subtitle carries the count either way.
+ */
+#compose.over-limit {
+  border: round $rx-error;
+}
+
+#compose-status {
+  display: none;
+  padding: 0 2;
+  color: $rx-text-muted;
+}
+
+#compose-status.visible {
+  display: block;
+}
+
+/* A failed send is not a failed archive. The connection banner is a full-width
+ * bar at the top of the screen in $rx-error; this is one line under the box that
+ * holds the text you are still free to retry, and it never takes the same shape.
+ */
+
+#compose-status.failed {
+  color: $rx-warning;
+}
+
+
+/* -------------------------------------------------
+   The direct message index
+   ------------------------------------------------- */
+
+/* One row per correspondent, in the list the messages used to be drawn in. It takes
+ * the shape a node row has — who, then a quieter line about them — because it is the
+ * same kind of thing: a person, and some facts about the last time you heard from
+ * them.
+ *
+ * The peer's name is `--color-accent-node`, which is what a node is called
+ * everywhere else in this interface; a conversation is a node you have talked to.
+ */
+
+ConversationItem {
+  padding: 0 1;
+  height: auto;
+  margin-bottom: 1;
+}
+
+ConversationItem .conversation-peer {
+  color: $rx-accent-node;
+}
+
+ConversationItem .conversation-summary {
+  color: $rx-text-muted;
+}
+
+/* Somebody is waiting on you. The same accent the unread bar uses on a message row,
+ * for the same reason and in the same colour — see the note on `MessageItem.unread`.
+ */
+
+#messages.direct > ConversationItem.unread {
+  border-left: thick $rx-outbound;
+  padding: 0 1 0 0;
+}
+
+#messages.direct > ConversationItem.unread .conversation-peer {
+  text-style: bold;
+}
+
+
+/* -------------------------------------------------
+   The two modal screens: the ctrl+p menu, and the log viewer
+   ------------------------------------------------- */
+
+/* Centered, then lifted: dialogs read as centered when they sit a little above
+ * the true middle, because the eye rests above it. One value if it reads wrong.
+ */
+
+MenuScreen {
+  align: center middle;
+}
+
+#menu {
+  width: 36;
+  height: auto;
+  offset: 0 -3;
+  padding: 1 2;
+  border: solid $rx-link;
+  background: $rx-bg-surface;
+}
+
+#menu-list {
+  height: auto;
+  background: transparent;
+}
+
+#menu-list > MenuItem {
+  padding: 0 1;
+}
+
+/* The same two cursor strengths the sidebar lists use, restated here for the
+ * same reason they were restated there: Textual's own `-highlight` would paint
+ * this list in colours this palette never chose.
+ */
+
+#menu-list > MenuItem.-highlight {
+  background: $block-cursor-blurred-background;
+}
+
+#menu-list:focus > MenuItem.-highlight {
+  background: $block-cursor-background;
+  color: $rx-on-accent;
+}
+
+/* The log viewer: the whole window, held in from the edges, with a double
+ * outline saying this is a different kind of surface — the one view in this
+ * interface that is not the archive. The padding is the "two line margin";
+ * horizontal is doubled because a cell is half as wide as it is tall.
+ */
+
+LogViewerScreen {
+  align: center middle;
+  padding: 2 4;
+}
+
+#log-frame {
+  width: 100%;
+  height: 100%;
+  border: double $rx-link;
+  border-title-color: $rx-text-secondary;
+  background: $rx-bg-surface;
+}
+
+/* The stream gives up both its scrollbars, like every list in the main screen.
+ * Jason's, and this rule used to be the exception with an argument attached: the
+ * lists have a cursor and a status line to say where you are and the log has
+ * neither, so the thumb was the only sense of place in five thousand lines of
+ * scrollback. That is still true and is what this costs. What stands in for it is
+ * the same thing that stands in for the message list's missing thumb — words: the
+ * footer offers `g Jump to newest` exactly when there are lines below the viewport
+ * the reader cannot see, so the one fact the thumb was carrying that matters, that
+ * you are not at the end, is still on screen.
+ *
+ * Both, not just the vertical. A `Log` does not wrap, so a long DEBUG line ran off
+ * the right edge and the horizontal bar was the only way to follow it — which was
+ * why `left` and `right` were bound on the screen. Same trade the lists made: hide
+ * the bar, keep a route.
+ *
+ * **The screen wraps the lines itself now (`LogViewerScreen.fill`), so there is no
+ * route left to keep and none needed** — nothing overflows sideways, and the two
+ * keys went with the need for them. This rule stays exactly as it is for the other
+ * half of its job: it is what keeps the pane the full width the wrap is computed
+ * against, and a scrollbar gutter appearing and disappearing under a wrap measured
+ * in cells is a loop nobody needs.
+ */
+
+#log-stream {
+  height: 1fr;
+  background: transparent;
+  color: $rx-text-primary;
+  scrollbar-size: 0 0;
+}
+
+/* The runs of a log line, told apart by colour: when it happened, what kind of
+ * thing it is, what it says, and which node it says it about. The message keeps
+ * the pane's own `$rx-text-primary` above and is the only one with no rule here,
+ * which is the point — it is the text, and the rest are the labels on it.
+ *
+ * The timestamp is the dimmest thing in the viewer, as asked. It is on every
+ * line and identical in shape on every line, so it is the run the eye should
+ * skip over on the way to the message and come back to only when it wants a
+ * time. `$rx-text-muted` is what the rest of this interface uses for exactly
+ * that — see `.message-time`.
+ *
+ * The levels are the usual severities and read the way severities read anywhere:
+ * quiet for the routine, the palette's own warning and error colours for the two
+ * that matter. DEBUG takes `$rx-text-secondary` rather than the muted colour it
+ * would otherwise want, because the muted colour is the timestamp's and the two
+ * markers sit side by side — a DEBUG line would have read as one long dim run.
+ *
+ * **INFO left `$rx-link` for `$rx-outbound` on 2026-08-07, and the reason is that
+ * almost everything here was teal.** The pane's message text, DEBUG, the
+ * timestamp and INFO were four colours out of one narrow family, INFO sat 0.106
+ * from DEBUG in OKLab, and `$rx-link` is also the double border drawn around the
+ * whole thing — so the busiest level in the log was the colour of the frame it
+ * was inside. The green pushes it to 0.141 from DEBUG and 0.161 from the message,
+ * and in the light palette it fixes a genuine legibility fault on the way:
+ * `$rx-link` is one value in both themes and manages 2.06:1 on a light surface,
+ * where `$rx-outbound` manages 3.43:1. Jason's call.
+ *
+ * **What green already means is "yours"** — `.message-header--node-outbound`, the
+ * sender's name on a message this device sent. Two meanings for one colour, and
+ * they are allowed to coexist because nothing shows both at once: that green is a
+ * name in a message row, this one is a marker in a log, and there is no view with
+ * a message list and a log pane on it together.
+ *
+ * `--node` is a node id — `!eeb826a4` — wherever the message mentions one, in the
+ * same `$rx-accent-node` yellow that names a node in the sidebar, the conversation
+ * list and a message header. **The point is that it is not a log colour at all**:
+ * it is the interface's word for "this is a node", borrowed intact, so an id
+ * skimmed out of a DEBUG dump is the same yellow as the row it belongs to.
+ *
+ * `--tag` is not a level. It is any other bracketed word in that position, which
+ * today means the testbed's `[testbed]` prefix. It shares the node yellow, which
+ * is a real overlap and a tolerable one: both are saying "this names who", and
+ * they never occupy the same column — a tag is the marker at the head of a line
+ * and an id is in the prose after it.
+ */
+
+#log-stream > .log-stream--time     { color: $rx-text-muted; }
+#log-stream > .log-stream--debug    { color: $rx-text-secondary; }
+#log-stream > .log-stream--info     { color: $rx-outbound; }
+#log-stream > .log-stream--warning  { color: $rx-warning; }
+#log-stream > .log-stream--error    { color: $rx-error; }
+#log-stream > .log-stream--critical { color: $rx-error; text-style: bold; }
+#log-stream > .log-stream--tag      { color: $rx-accent-node; }
+#log-stream > .log-stream--node     { color: $rx-accent-node; }
+
+/* The log viewer's own two footer entries.
+ *
+ * The arrows are the node accent and the slashes between them are the link
+ * colour, which is Jason's pick and is also the one pairing in this palette that
+ * separates a run of glyphs without competing with it: the accent is the
+ * brightest thing in either theme and the link sits a step back from it, so the
+ * four keys read as four and the separators read as punctuation.
+ *
+ * The level chip beside `tab` takes no colour here. It is painted with whatever
+ * `#log-stream` resolved for that level — read off the widget itself, so the bar
+ * and the pane cannot disagree about what `[ERROR]` looks like. See `LogFooter`.
+ */
+
+LogFooter > ScrollKeys > .scroll-keys--arrow     { color: $rx-accent-node; }
+LogFooter > ScrollKeys > .scroll-keys--separator { color: $rx-link; }

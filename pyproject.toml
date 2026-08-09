@@ -1,0 +1,35 @@
+[project]
+name = "mesh-console"
+version = "0.1.0"
+description = "A terminal interface for reading a Meshtastic archive over SSH."
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+authors = [
+    { name = "epohs" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "textual",
+]
+
+[project.urls]
+Homepage = "https://github.com/epohs/mesh-console"
+Repository = "https://github.com/epohs/mesh-console"
+
+# Sending is opt-in here as well as in the config, mirroring what mesh-collector
+# does with its own transmit extra. An install done with a plain `uv sync` has no
+# mesh-link in its import path, so ENABLE_SEND has nothing to switch on and this
+# stays a genuinely read-only console. The collector is the one that transmits;
+# this only ever asks it to.
+#
+#   uv sync                read only
+#   uv sync --extra send   read, and send when ENABLE_SEND is set
+[project.optional-dependencies]
+send = [
+    "mesh-link",
+]
+
+# mesh-link is a sibling project rather than a published package. Point this at
+# a git URL or a version once it is released somewhere.
+[tool.uv.sources]
+mesh-link = { path = "../mesh-link" }

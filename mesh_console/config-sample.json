@@ -1,0 +1,13 @@
+{
+    "DEBUG": false,
+    "DB_PATH": "/home/pi/mesh-collector/data/db.sqlite",
+
+    "SHOW_DIRECT_MESSAGES": false,
+    "POLL_INTERVAL": 10,
+    "PAGE_SIZE": 50,
+
+    "ENABLE_SEND": false,
+    "CONTROL_SOCKET_PATH": "",
+
+    "LOG_COMMAND": "journalctl -u mesh-collector -f -n 200 -o short-iso-precise"
+}

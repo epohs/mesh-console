@@ -5,17 +5,21 @@ pattern-matching against somebody else's output rather than parsing a format we
 control. That sets the rule the whole module follows: **a line that does not
 match is passed through untouched.** No line is ever dropped, reordered or
 rewritten on a guess — the viewer's job is to show what the command said, and
-the most this may do is restate a timestamp and colour two runs of it.
+the most this may do is restate a timestamp, drop the transport's own framing
+from in front of the message, and colour two runs of what is left.
 
-Three things are recognised, in this order:
+Four things are recognised, in this order:
 
 1. **A leading ISO-8601 instant**, which is turned into the local time in the
    form the rest of the console shows times in. See `localise_stamp` for why an
    explicit offset is required.
-2. **A level marker** — `[DEBUG]`, `[ERROR]` — which is what the collector's own
+2. **The writer's name and pid** — `python[2560]: ` — which is journald's
+   framing rather than anything the collector wrote, and is removed. See
+   `strip_source`.
+3. **A level marker** — `[DEBUG]`, `[ERROR]` — which is what the collector's own
    `LOG_FORMAT` puts at the front of every line it logs, and what the viewer
    filters on.
-3. **Any other bracketed tag** in that position, which is not a level and is not
+4. **Any other bracketed tag** in that position, which is not a level and is not
    treated as one. `[testbed]` is the case that exists: the testbed prefixes its
    own lines into the same file the collector's output goes to.
 
@@ -88,6 +92,35 @@ ISO_STAMP = re.compile(
 # at render. Change one and this stops colouring.
 LOCAL_STAMP = re.compile(r"^\d{1,2}/\d{1,2} \d{1,2}:\d{2}:\d{2} [AP]M")
 
+# journald's own framing between the stamp and the message: the syslog identifier
+# of whatever wrote the line, and its pid — `python[2560]: `. The identifier is
+# the *interpreter's* name here, because that is what systemd sees exec'd, so it
+# does not even name the collector; and the pid is the same number on every line
+# until the service restarts. Neither is information about the record it sits in
+# front of, and together they cost twenty-two columns of the message's own room.
+# Jason's, 2026-08-10.
+#
+# **The pid is required, and that is what makes this safe to remove.** An
+# identifier alone is indistinguishable from a word the message opens with — a
+# line reading `Error: no such device` would lose `Error: ` to a pattern that did
+# not insist on the brackets. With them there is no such line: `[0-9]+` in
+# brackets immediately before a colon is journald's shape and nothing else's. A
+# line journald wrote without a pid (`kernel:`) keeps it, which is the same
+# answer this module gives everywhere it is not certain.
+#
+# No `^`: this is matched from the end of the stamp rather than the start of the
+# line, so the position is established by something already recognised instead of
+# being guessed at. See `strip_source`.
+#
+# **One space at the end, not `\s+`, and that is load-bearing.** journald joins
+# its prefix to the message with exactly one space, so one space is all that
+# belongs to journald — anything past it is the message's own indentation. A
+# protobuf dump logged with `TIDY_LOGS` off is a record across a dozen lines whose
+# nesting *is* that leading whitespace, and `\s+` here swallowed it, turning
+# `   free: 16` into `free: 16` and flattening the structure the dump was written
+# to show.
+SOURCE = re.compile(r"\s+[^\s\[\]:]+\[\d+\]: ?")
+
 # A bracketed tag standing on its own, which is what a level marker looks like.
 # **The bracket has to start a word**, and that is what keeps journald's
 # `mesh-collector[1234]:` out of it — the `[` there follows a letter, so it is
@@ -115,9 +148,10 @@ NODE_ID = re.compile(r"(?<![0-9A-Za-z])!([0-9a-fA-F]{8})(?![0-9A-Za-z])")
 class LogLine(NamedTuple):
   """One line as the viewer holds it: what to print, and what it is.
 
-  `text` is the line after `localise_stamp`, so it is what goes on screen and
-  what any search of the scrollback would be searching. `level` is one of
-  `LEVELS` or `NO_LEVEL`, and is what the filter matches on.
+  `text` is the line after `localise_stamp` and `strip_source`, so it is what
+  goes on screen and what any search of the scrollback would be searching — a
+  search for a pid will not find one, because by here it is gone. `level` is one
+  of `LEVELS` or `NO_LEVEL`, and is what the filter matches on.
 
   `notice` marks the viewer's own lines — the two it writes itself when the
   command cannot start or has stopped. **A notice is shown under every filter.**
@@ -168,6 +202,57 @@ def localise_stamp(line: str) -> str:
 
 
 
+def strip_source(line: str) -> str:
+  """Drop journald's `python[2560]: ` from between the stamp and the message.
+
+  **What it removes is the transport's, not the log's.** The collector logs
+  through `logging` with `[%(levelname)s]` as its whole prefix; everything
+  between the timestamp and that marker was added by journald on the way past,
+  and names the interpreter and the pid rather than the record. Two lines of a
+  protobuf dump differ in their content and in nothing else, so repeating the
+  writer's name on both of them is a column of the same string all the way down
+  the pane.
+
+  **This also decides whether wrapped lines stay aligned.** The indent a
+  continuation hangs from is measured to the message column, and the rule at
+  `_MIN_MESSAGE_ROOM` drops the alignment when that column leaves too little room
+  to wrap in. With journald's framing the prefix is forty-five columns and an
+  eighty-column terminal gave the alignment up entirely; without it the same
+  terminal keeps it. Removing this is what buys that back — see `wrap`.
+
+  **Run after `localise_stamp` and anchored to what it wrote.** The match starts
+  at the end of the local stamp, so this only ever removes a run in the one
+  position journald puts it in. A line whose stamp was not recognised — no
+  offset to convert, or not a stamp at all — is left completely alone, which is
+  the same answer `localise_stamp` gives those lines and keeps this from reaching
+  into the output of a `LOG_COMMAND` that is not journald at all.
+
+  **It wants `--no-hostname`, which `LOG_COMMAND` already passes.** With the
+  hostname in, journald writes `<stamp> pi4 python[2560]: ` and the identifier no
+  longer follows the stamp directly, so nothing here matches and the whole run
+  stays. That is deliberate rather than a gap: a hostname is the one field in
+  there that is real information, a reader who turned it back on asked to see
+  which machine spoke, and quietly eating it to reach the pid behind it would be
+  answering a question nobody put. Keep the hostname and you keep the framing
+  with it; the shipped command drops both.
+  """
+  stamp = LOCAL_STAMP.match(line)
+  if stamp is None:
+    return line
+
+  match = SOURCE.match(line, stamp.end())
+  if match is None:
+    return line
+
+  # One space back in place of the run: the stamp and what follows it are two
+  # fields and this is the join between them. Whatever the message's first
+  # characters are — a marker, or the indentation of a dump's continuation — they
+  # survive intact, because `SOURCE` claimed only journald's own single separator.
+  return line[:stamp.end()] + " " + line[match.end():]
+
+
+
+
 def level_of(line: str) -> str:
   """The line's level, or `NO_LEVEL` — the first standalone bracketed tag, if it names one.
 
@@ -212,7 +297,9 @@ def read_line(line: str, previous: str = NO_LEVEL) -> LogLine:
   states what it is; `   free: 16` states nothing and is therefore part of
   whatever stated last.
   """
-  text = localise_stamp(line)
+  # Order matters: `strip_source` finds its run by measuring from the end of the
+  # stamp `localise_stamp` has just written, so it cannot run first.
+  text = strip_source(localise_stamp(line))
   level = level_of(text)
   if level == NO_LEVEL and not tagged(text):
     level = previous
@@ -262,14 +349,19 @@ _CHUNKS = re.compile(r"(\s+)")
 # dropped and continuations start at the margin — a message wrapping in a gutter
 # is harder to read than one that is not aligned at all.
 #
-# **This is a number because journald has a long prefix.** Under the testbed the
-# prefix is a stamp and a level, twenty-two columns, and any rule at all keeps
-# the indent. Under `journalctl` the unit and pid come too — `8/7 2:52:29 PM
-# mesh-collector[1234]: [DEBUG] ` is forty-five — so the rule decides the Pi's
-# behaviour rather than being a formality. Asking whether the indent leaves a
-# readable column is the question that actually matters; the rule here was once
-# "less than half the pane", which threw the alignment away on an eighty-column
-# terminal with thirty-five perfectly good columns left to wrap in.
+# **The rule survives its original reason, and is kept for the next one.** It was
+# a number because journald's prefix was long: the unit and pid arrived in front
+# of the level, making `8/7 2:52:29 PM mesh-collector[1234]: [DEBUG] ` forty-five
+# columns, and the rule decided the Pi's behaviour rather than being a formality.
+# `strip_source` now removes that run, so a journald line prefixes a stamp and a
+# level — twenty-two columns, the same as the testbed — and an eighty-column
+# terminal keeps its alignment where it used to give it up.
+#
+# What still needs the rule is a narrow pane rather than a long prefix. Asking
+# whether the indent leaves a readable column is the question that actually
+# matters; the rule here was once "less than half the pane", which threw the
+# alignment away on an eighty-column terminal with thirty-five perfectly good
+# columns left to wrap in.
 _MIN_MESSAGE_ROOM = 32
 
 

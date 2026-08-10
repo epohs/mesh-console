@@ -66,9 +66,15 @@ CONSOLE_CONFIG = {
   # `--no-hostname` because the hostname is the same on every line of a log you
   # are reading one machine's worth of, and it is not free: it sits in front of
   # the level marker, so it widens the column the viewer hangs a wrapped line's
-  # continuation from. With it, an 80-column terminal gives up the alignment
-  # entirely — see `_MIN_MESSAGE_ROOM` in ui/logfmt.py. Without it, the same
-  # terminal keeps it.
+  # continuation from — see `_MIN_MESSAGE_ROOM` in ui/logfmt.py.
+  #
+  # **It also enables the rest of that framing being removed.** journald puts the
+  # writer's name and pid after the hostname, and `logfmt.strip_source` drops that
+  # run by measuring from the end of the stamp — which only reaches it when the
+  # hostname is not in between. So dropping this flag costs more than the one
+  # field: the `python[2560]: ` comes back with it, deliberately, because a reader
+  # who asked to see which machine spoke should not have it silently discarded to
+  # get at the pid behind it.
   "LOG_COMMAND": ("journalctl -u mesh-collector -f -n 200"
                   " -o short-iso-precise --no-hostname"),
 }

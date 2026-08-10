@@ -41,8 +41,15 @@ SHARED_CONFIG = {
 # Sending is also opt-in in what gets installed: mesh-link is an optional
 # dependency, so a console installed with a plain `uv sync` has nothing this
 # setting could switch on. See pyproject.toml.
+# LIST_UNNAMED_NODES is deliberately not SHOW_UNNAMED_NODES, and carries the same
+# name and meaning in RxOnly. It gates *discovery* — the node list, the counts
+# beside it, and the filter box — and never *resolution*: a node looked up by the
+# id it is addressed by still answers, whatever this says. Off by default because a
+# nameless node is usually a beacon or a tracker rather than something a reader was
+# looking for.
 CONSOLE_CONFIG = {
   "SHOW_DIRECT_MESSAGES": False,      # Should the console display archived direct messages
+  "LIST_UNNAMED_NODES": False,        # Should nodes with no name appear in node lists
   "POLL_INTERVAL": 10,                # Seconds between checks for new messages
   "PAGE_SIZE": 50,                    # Messages and nodes fetched per page
   "ENABLE_SEND": False,               # Offer a compose box, and ask the collector to transmit

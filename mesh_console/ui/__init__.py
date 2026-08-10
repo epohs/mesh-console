@@ -353,6 +353,9 @@ class MeshConsoleApp(App):
     self.current_map_url: Optional[str] = None
 
     self.show_direct_messages: bool = Config.get("SHOW_DIRECT_MESSAGES", False)
+    # Passed to every node *list* read, and to no node *lookup*: a node detail
+    # opened from a row, or a sidebar row refreshed by id, resolves regardless.
+    self.list_unnamed_nodes: bool = Config.get("LIST_UNNAMED_NODES", False)
     self.page_size: int = int(Config.get("PAGE_SIZE", 50))
     self.poll_interval: float = float(Config.get("POLL_INTERVAL", 10))
 
@@ -730,7 +733,10 @@ class MeshConsoleApp(App):
 
     # Remember which device this archive belongs to, so the first poll compares
     # against it rather than reporting a swap that never happened.
-    stats = self.read(db.fetch_stats, self.show_direct_messages)
+    stats = self.read(
+      db.fetch_stats, self.show_direct_messages,
+      list_unnamed=self.list_unnamed_nodes,
+    )
     if stats is not None:
       self.check_for_state_change(stats)
 
@@ -801,7 +807,10 @@ class MeshConsoleApp(App):
 
 
   def refresh_sidebar(self) -> None:
-    stats = self.read(db.fetch_stats, self.show_direct_messages)
+    stats = self.read(
+      db.fetch_stats, self.show_direct_messages,
+      list_unnamed=self.list_unnamed_nodes,
+    )
     channels = self.read(db.fetch_channels)
 
     if stats is None or channels is None:
@@ -955,6 +964,7 @@ class MeshConsoleApp(App):
       NODE_SEARCH_LIMIT if self.node_search else self.page_size,
       0,
       self.node_search or None,
+      list_unnamed=self.list_unnamed_nodes,
     )
     if page is None:
       return
@@ -1047,7 +1057,10 @@ class MeshConsoleApp(App):
 
     self.nodes_loading = True
     try:
-      page = self.read(db.fetch_nodes, self.page_size, self.node_offset, None)
+      page = self.read(
+        db.fetch_nodes, self.page_size, self.node_offset, None,
+        list_unnamed=self.list_unnamed_nodes,
+      )
       if page is None or not page["nodes"]:
         return
 
@@ -1250,7 +1263,10 @@ class MeshConsoleApp(App):
     another change. The check belongs to the poll, which is the one place that
     asks "has the archive become something else?"
     """
-    stats = self.read(db.fetch_stats, self.show_direct_messages)
+    stats = self.read(
+      db.fetch_stats, self.show_direct_messages,
+      list_unnamed=self.list_unnamed_nodes,
+    )
     if stats is None:
       return
 
@@ -3928,7 +3944,10 @@ class MeshConsoleApp(App):
       self.record_poll_failure()
       return
 
-    stats = self.read(db.fetch_stats, self.show_direct_messages)
+    stats = self.read(
+      db.fetch_stats, self.show_direct_messages,
+      list_unnamed=self.list_unnamed_nodes,
+    )
     if stats is None:
       self.record_poll_failure()
       return
@@ -4107,7 +4126,10 @@ class MeshConsoleApp(App):
       self.update_nodes_heading(self.node_offset)
       return
 
-    matches = self.read(db.fetch_nodes, 0, 0, self.node_search)
+    matches = self.read(
+      db.fetch_nodes, 0, 0, self.node_search,
+      list_unnamed=self.list_unnamed_nodes,
+    )
     if matches is None:
       return
 

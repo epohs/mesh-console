@@ -3,6 +3,7 @@
     "DB_PATH": "/home/pi/mesh-collector/data/db.sqlite",
 
     "SHOW_DIRECT_MESSAGES": false,
+    "LIST_UNNAMED_NODES": false,
     "POLL_INTERVAL": 10,
     "PAGE_SIZE": 50,
 

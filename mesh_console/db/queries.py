@@ -64,6 +64,46 @@ _NODE_COLUMNS = """
   channel_util, air_util_tx, uptime_seconds
 """
 
+# "The mesh has told us a name for this node", and the one place it is written.
+#
+# Names and nothing else. A node can report a hardware model and no name at all, so
+# testing `hardware` would keep rows this is meant to hide; and a `long_name` of
+# 'Meshtastic 18b7' is a real name that unconfigured firmware genuinely announces,
+# not a fabricated one. Unnamed is `long_name IS NULL AND short_name IS NULL`, and
+# this is its negation. RxOnly spells the same predicate the same way in its
+# web/db.py — a deliberate reimplementation, like everything else in this module.
+_NAMED_NODE = "(long_name IS NOT NULL OR short_name IS NOT NULL)"
+
+
+
+
+def _node_where(*conditions: str, list_unnamed: bool = False) -> str:
+  """A WHERE clause for a node *list*, honouring the caller's LIST_UNNAMED_NODES.
+
+  Returns "" only when there is nothing at all to restrict — no caller condition
+  and the reader has asked to see unnamed nodes.
+
+  Composed from a list rather than by patching a clause, which is what makes the
+  filtered and unfiltered cases the same code: `fetch_nodes` used to interpolate a
+  `match_clause` that was either a whole `WHERE ...` or the empty string, so a
+  predicate appended as `AND (...)` broke the empty case and one prepended as
+  `WHERE ...` broke the search case. Joining fragments has neither edge.
+
+  Conditions are ANDed, so a caller passing an OR chain must parenthesise it — the
+  search clause in `fetch_nodes` does. **This is for lists only.** `fetch_node` and
+  `fetch_nodes_by_id` resolve nodes by the ids they are handed and ignore the flag
+  entirely: see CONSOLE_CONFIG in mesh_console/config.py for why.
+  """
+  clauses = [condition for condition in conditions if condition]
+
+  if not list_unnamed:
+    clauses.append(_NAMED_NODE)
+
+  if not clauses:
+    return ""
+
+  return "WHERE " + " AND ".join(clauses)
+
 
 
 
@@ -167,9 +207,19 @@ def fetch_local_node(conn: sqlite3.Connection) -> Optional[dict[str, Any]]:
 def fetch_stats(
   conn: sqlite3.Connection,
   show_direct_messages: bool = False,
+  list_unnamed: bool = False,
 ) -> dict[str, Any]:
-  """Dashboard counts and the local node."""
-  total_nodes = conn.execute("SELECT COUNT(*) AS count FROM nodes").fetchone()["count"]
+  """Dashboard counts and the local node.
+
+  `total_nodes` follows `fetch_nodes`: it is the number the sidebar heading reports
+  and the number the list pages towards, so counting rows the list will not show
+  would make `Nodes (84)` name a set the reader cannot reach the end of. The local
+  node below is resolved by id and is deliberately not filtered — the attached
+  device is reported whether or not it has been given a name.
+  """
+  total_nodes = conn.execute(
+    f"SELECT COUNT(*) AS count FROM nodes {_node_where(list_unnamed=list_unnamed)}"
+  ).fetchone()["count"]
   total_messages = conn.execute("SELECT COUNT(*) AS count FROM messages").fetchone()["count"]
   total_channels = conn.execute("SELECT COUNT(*) AS count FROM channels").fetchone()["count"]
 
@@ -633,17 +683,28 @@ def fetch_nodes(
   limit: int = 50,
   offset: int = 0,
   search: Optional[str] = None,
+  list_unnamed: bool = False,
 ) -> dict[str, Any]:
-  """One page of nodes, most recently seen first, optionally filtered."""
+  """One page of nodes, most recently seen first, optionally filtered.
+
+  The search terms are parenthesised because `_node_where` ANDs what it is given: a
+  bare OR chain would bind as `id LIKE ? OR name LIKE ? OR (name LIKE ? AND named)`
+  and match unnamed nodes by id after all. Searching an id is exactly how an unnamed
+  node would otherwise be stumbled onto, so the filter has to survive it — one
+  switch, one meaning, list and count and filter box together.
+  """
   limit = max(0, min(limit, 1000))
   offset = max(0, offset)
 
   if search:
     pattern = f"%{search}%"
-    match_clause = "WHERE node_id LIKE ? OR short_name LIKE ? OR long_name LIKE ?"
+    match_clause = _node_where(
+      "(node_id LIKE ? OR short_name LIKE ? OR long_name LIKE ?)",
+      list_unnamed=list_unnamed,
+    )
     match_params: tuple[Any, ...] = (pattern, pattern, pattern)
   else:
-    match_clause = ""
+    match_clause = _node_where(list_unnamed=list_unnamed)
     match_params = ()
 
   total = conn.execute(
@@ -676,7 +737,12 @@ def fetch_nodes(
 
 
 def fetch_node(conn: sqlite3.Connection, node_id: str) -> Optional[dict[str, Any]]:
-  """A single node by its hex id."""
+  """A single node by its hex id. **Ignores LIST_UNNAMED_NODES, always.**
+
+  That flag is about discovery — meeting a node nobody named while reading a list —
+  and this is resolution: the caller already holds the id. Do not add `_node_where`
+  to this query, or to `fetch_nodes_by_id` below.
+  """
   row = conn.execute(
     f"SELECT {_NODE_COLUMNS} FROM nodes WHERE node_id = ?",
     (node_id,),

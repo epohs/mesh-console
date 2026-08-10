@@ -6,7 +6,8 @@ control. That sets the rule the whole module follows: **a line that does not
 match is passed through untouched.** No line is ever dropped, reordered or
 rewritten on a guess — the viewer's job is to show what the command said, and
 the most this may do is restate a timestamp, drop the transport's own framing
-from in front of the message, and colour two runs of what is left.
+from in front of the message, pad the two fields that remain to a fixed width,
+and colour them. Nothing is ever truncated to make a column fit.
 
 Four things are recognised, in this order:
 
@@ -128,6 +129,36 @@ SOURCE = re.compile(r"\s+[^\s\[\]:]+\[\d+\]: ?")
 # is the first thing this matches. No whitespace inside, which is what keeps
 # `[Errno 2]` out of it.
 TAG = re.compile(r"(?:^|(?<=\s))\[([^\[\]\s]+)\]")
+
+# The two fields in front of a message, each padded to a fixed width so the
+# message starts in the same column on every line. A log is read down its columns
+# rather than along its lines, and a message column that steps sideways by one is
+# a column the eye has to re-find on every row. Jason's, 2026-08-10.
+#
+# **The widths are the widest each field can be, not the widest yet seen.** A
+# width measured from the lines in hand would be a width that changes when a new
+# line arrives, which is a realignment of the whole pane rather than a layout.
+#
+# The stamp is seventeen because `LOG_TIME_FORMAT` asks for no leading zeros:
+# `%-m/%-d %-I:%M:%S %p` renders between fourteen columns (`1/1 1:00:00 AM`) and
+# seventeen (`12/31 10:50:54 PM`), so an unpadded log steps sideways at an hour
+# rollover as readily as at a level change.
+STAMP_FIELD = 17
+
+# The marker is ten because that is `[CRITICAL]`, the longest of the five levels
+# `LEVELS` can hold — **not `[WARNING]`, which is merely the longest that shows up
+# in an ordinary log.** Sizing to nine would align four levels and leave the fifth
+# one column out, which is the defect this exists to remove. `LEVEL_ALIASES` maps
+# `FATAL` here too, so the case is reachable from a process that is not this one.
+# A tag wider than the field — someone else's `[a-long-tag]` — simply overflows
+# and keeps its single separating space, rather than being truncated to fit.
+MARKER_FIELD = 10
+
+# The stamp's separator and the marker it precedes, matched from the end of the
+# stamp. `[ ]+` rather than `\s+` on both sides so a tab is never mistaken for
+# field padding, and the `(?=\S)` means a line with nothing after its marker is
+# left alone instead of being padded into trailing whitespace.
+_STAMPED_MARKER = re.compile(r"[ ]+(\[[^\[\]\s]+\])[ ]+(?=\S)")
 
 # A node id as Meshtastic writes one: `!` and eight hex digits, which is the node
 # number in hex and is how every id in this archive is spelled — `!eeb826a4`. The
@@ -253,6 +284,45 @@ def strip_source(line: str) -> str:
 
 
 
+def align_fields(line: str) -> str:
+  """Pad the stamp and the marker to fixed widths, so every message starts in one column.
+
+  `[DEBUG]` is seven characters and `[INFO]` is six, so an unpadded log puts its
+  messages in two different columns and the eye re-finds the text on every row.
+  The stamp does the same thing an hour later, for the same reason in a different
+  field — see `STAMP_FIELD`. Both are padded to the widest they can be, and one
+  space separates each field from the next.
+
+  **Only a line carrying both fields is reflowed, and everything else passes
+  through.** A line with a stamp but no marker is a continuation — the body of a
+  protobuf dump logged with `TIDY_LOGS` off — and its leading whitespace is the
+  producer's own nesting rather than a field this may re-space. Padding the stamp
+  on those lines would move that nesting for no gain, so they are left exactly as
+  they arrived. Their message therefore does not sit in the shared column; that is
+  the honest trade, and the alternative is inventing an empty marker field for a
+  line that never had one.
+
+  A tag wider than `MARKER_FIELD` overflows rather than being cut. Truncating
+  `[a-long-tag]` to fit a column would be rewriting what the command said, which
+  is the one thing this module does not do.
+  """
+  stamp = LOCAL_STAMP.match(line)
+  if stamp is None:
+    return line
+
+  match = _STAMPED_MARKER.match(line, stamp.end())
+  if match is None:
+    return line
+
+  return (line[:stamp.end()].ljust(STAMP_FIELD)
+          + " "
+          + match.group(1).ljust(MARKER_FIELD)
+          + " "
+          + line[match.end():])
+
+
+
+
 def level_of(line: str) -> str:
   """The line's level, or `NO_LEVEL` — the first standalone bracketed tag, if it names one.
 
@@ -297,9 +367,11 @@ def read_line(line: str, previous: str = NO_LEVEL) -> LogLine:
   states what it is; `   free: 16` states nothing and is therefore part of
   whatever stated last.
   """
-  # Order matters: `strip_source` finds its run by measuring from the end of the
-  # stamp `localise_stamp` has just written, so it cannot run first.
-  text = strip_source(localise_stamp(line))
+  # Order matters, and each step depends on the one before it: `strip_source`
+  # finds its run by measuring from the end of the stamp `localise_stamp` has just
+  # written, and `align_fields` can only put the marker in its column once the
+  # framing between the two is gone.
+  text = align_fields(strip_source(localise_stamp(line)))
   level = level_of(text)
   if level == NO_LEVEL and not tagged(text):
     level = previous

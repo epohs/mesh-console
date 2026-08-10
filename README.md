@@ -79,5 +79,10 @@ Direct messages are sent from a conversation with one node, never from the direc
      over SSH instead of putting a dashboard on the public internet. -->
 
 
+## To-Do
+
+1. `poll()` does its full job even when none of it is on screen. With the log viewer pushed on top it still runs the `fetch_stats` queries, re-renders the dashboard, refreshes the channel counts, and re-reads every `NodeItem` through `fetch_nodes_by_id` — all on the screen underneath. On the Pi that's a ~32% CPU spike for half a second, every 10 seconds, for nothing you can see. Guard the top of `poll()`: keep the reconnect and state-change check, skip the view work when `self.screen` isn't the main one.
+
+
 Licensed under the GNU AGPL-3.0
 Copyright (c) 2026 epohs

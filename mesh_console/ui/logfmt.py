@@ -6,8 +6,8 @@ control. That sets the rule the whole module follows: **a line that does not
 match is passed through untouched.** No line is ever dropped, reordered or
 rewritten on a guess — the viewer's job is to show what the command said, and
 the most this may do is restate a timestamp, drop the transport's own framing
-from in front of the message, pad the two fields that remain to a fixed width,
-and colour them. Nothing is ever truncated to make a column fit.
+from in front of the message, pad the level marker out to a fixed column, and
+colour what is left. Nothing is ever truncated to make a column fit.
 
 Four things are recognised, in this order:
 
@@ -130,20 +130,24 @@ SOURCE = re.compile(r"\s+[^\s\[\]:]+\[\d+\]: ?")
 # `[Errno 2]` out of it.
 TAG = re.compile(r"(?:^|(?<=\s))\[([^\[\]\s]+)\]")
 
-# The two fields in front of a message, each padded to a fixed width so the
-# message starts in the same column on every line. A log is read down its columns
-# rather than along its lines, and a message column that steps sideways by one is
-# a column the eye has to re-find on every row. Jason's, 2026-08-10.
+# The marker is padded to a fixed width so the message starts in the same column
+# on every line. A log is read down its columns rather than along its lines, and a
+# message column that steps sideways by one is a column the eye has to re-find on
+# every row. Jason's, 2026-08-10.
 #
-# **The widths are the widest each field can be, not the widest yet seen.** A
-# width measured from the lines in hand would be a width that changes when a new
-# line arrives, which is a realignment of the whole pane rather than a layout.
+# **The stamp in front of it is deliberately *not* padded, and one space separates
+# it from the marker.** It could be: `LOG_TIME_FORMAT` asks for no leading zeros,
+# so `%-m/%-d %-I:%M:%S %p` renders between fourteen columns (`1/1 1:00:00 AM`)
+# and seventeen (`12/31 10:50:54 PM`), and a seventeen-wide field would hold the
+# message still across every hour and date. It was written that way first and
+# reverted, because the cost is visible on every single line and the benefit is
+# not: padding to the widest *possible* stamp puts two idle columns in front of
+# the marker all day, to buy alignment across a boundary crossed twice a day.
 #
-# The stamp is seventeen because `LOG_TIME_FORMAT` asks for no leading zeros:
-# `%-m/%-d %-I:%M:%S %p` renders between fourteen columns (`1/1 1:00:00 AM`) and
-# seventeen (`12/31 10:50:54 PM`), so an unpadded log steps sideways at an hour
-# rollover as readily as at a level change.
-STAMP_FIELD = 17
+# So the log steps one column right when the hour reaches double digits, and again
+# when a date changes width. Within any one of those spans — which is what a
+# reader is actually looking at — every stamp is the same width and every message
+# lines up. Jason's call, 2026-08-10.
 
 # The marker is seven, which is `[DEBUG]` and `[ERROR]` — **not `[CRITICAL]`, the
 # widest a level can be.** Sizing to the widest possible marker looks like the
@@ -303,13 +307,16 @@ def strip_source(line: str) -> str:
 
 
 def align_fields(line: str) -> str:
-  """Pad the stamp and the marker to fixed widths, so every message starts in one column.
+  """Pad the marker to a fixed width, so every message starts in one column.
 
   `[DEBUG]` is seven characters and `[INFO]` is six, so an unpadded log puts its
   messages in two different columns and the eye re-finds the text on every row.
-  The stamp does the same thing an hour later, for the same reason in a different
-  field — see `STAMP_FIELD`. Both are padded to the widest they can be, and one
-  space separates each field from the next.
+  The marker is padded to `MARKER_FIELD` and one space separates each field from
+  the next.
+
+  **The stamp is not padded**, so the whole line still steps sideways when the
+  hour or the date changes width — see the note above `MARKER_FIELD` for why that
+  is the better trade than two idle columns on every row.
 
   **Only a line carrying both fields is reflowed, and everything else passes
   through.** A line with a stamp but no marker is a continuation — the body of a
@@ -336,7 +343,7 @@ def align_fields(line: str) -> str:
   if match is None:
     return line
 
-  return (line[:stamp.end()].ljust(STAMP_FIELD)
+  return (line[:stamp.end()]
           + " "
           + match.group(1).ljust(MARKER_FIELD)
           + " "

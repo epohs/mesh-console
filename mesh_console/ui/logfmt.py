@@ -145,14 +145,32 @@ TAG = re.compile(r"(?:^|(?<=\s))\[([^\[\]\s]+)\]")
 # rollover as readily as at a level change.
 STAMP_FIELD = 17
 
-# The marker is ten because that is `[CRITICAL]`, the longest of the five levels
-# `LEVELS` can hold — **not `[WARNING]`, which is merely the longest that shows up
-# in an ordinary log.** Sizing to nine would align four levels and leave the fifth
-# one column out, which is the defect this exists to remove. `LEVEL_ALIASES` maps
-# `FATAL` here too, so the case is reachable from a process that is not this one.
-# A tag wider than the field — someone else's `[a-long-tag]` — simply overflows
-# and keeps its single separating space, rather than being truncated to fit.
-MARKER_FIELD = 10
+# The marker is seven, which is `[DEBUG]` and `[ERROR]` — **not `[CRITICAL]`, the
+# widest a level can be.** Sizing to the widest possible marker looks like the
+# careful choice and is the wrong one, because the two markers that need the extra
+# room are the two that almost never arrive. Measured over a real collector log of
+# 2004 lines: 1456 `[DEBUG]`, 537 `[INFO]`, 4 `[WARNING]`, 1 `[ERROR]`, no
+# `[CRITICAL]`. A field of ten spends three columns on every one of those lines to
+# align four of them.
+#
+# So `[WARNING]` and `[CRITICAL]` overflow, and their message starts two or three
+# columns right of everything else. That is a real inconsistency accepted on
+# purpose, and it is cheap here for a reason worth writing down: those lines are
+# the startup banners — MQTT proxying, transmit enabled — several hundred
+# characters of prose that wrap over many rows anyway. A column is what a line is
+# *scanned* by, and nobody scans a paragraph.
+#
+# **Overflowing rather than abbreviating is the point.** `[WARN]` and `[CRIT]`
+# would align everything at this width, and were considered; they would also mean
+# the level on screen is not the level in the journal, so grepping for what you
+# read stops matching. `level_of` reads the marker off this same text, and while
+# `LEVEL_ALIASES` would carry `WARN`, there is no `CRIT` in Python's vocabulary —
+# a critical line would quietly classify as no level at all and fall out of the
+# level filter. Jason's call, 2026-08-10.
+#
+# A tag wider than the field — someone else's `[a-long-tag]` — overflows the same
+# way and keeps its single separating space, rather than being truncated to fit.
+MARKER_FIELD = 7
 
 # The stamp's separator and the marker it precedes, matched from the end of the
 # stamp. `[ ]+` rather than `\s+` on both sides so a tab is never mistaken for
@@ -302,9 +320,13 @@ def align_fields(line: str) -> str:
   the honest trade, and the alternative is inventing an empty marker field for a
   line that never had one.
 
-  A tag wider than `MARKER_FIELD` overflows rather than being cut. Truncating
-  `[a-long-tag]` to fit a column would be rewriting what the command said, which
-  is the one thing this module does not do.
+  **A marker wider than `MARKER_FIELD` overflows rather than being cut**, and that
+  includes two of the five levels: `[WARNING]` and `[CRITICAL]` start their message
+  two and three columns right of everything else. The field is sized for the log
+  that exists rather than the log that is possible — see `MARKER_FIELD` for the
+  counts that decided it. Truncating a level, or someone else's `[a-long-tag]`, to
+  fit a column would be rewriting what the command said, which is the one thing
+  this module does not do.
   """
   stamp = LOCAL_STAMP.match(line)
   if stamp is None:

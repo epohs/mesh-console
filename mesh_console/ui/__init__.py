@@ -116,6 +116,34 @@ STALE_AFTER_SECONDS = 60.0
 # normal and must not rebuild the sidebar.
 STALE_GAP_INTERVALS = 4
 
+# How long the node list may go without a real load before the poll stops patching
+# it in place and rebuilds it instead.
+#
+# **This is the one that does not depend on the terminal telling us anything, and
+# it is the one that matters.** `on_app_focus` and the gap check above are both
+# statements about an *event* — you came back, or this process stopped running —
+# and staleness is not an event. A console left visible on a second monitor while
+# its reader works in a browser is never blurred, never suspended, and after ten
+# minutes its node list is in ten-minute-old order missing every node heard since.
+# That was reported from the Pi against exactly this arrangement, after the focus
+# handling was already in. The focus path survives because it makes coming back
+# feel immediate rather than waiting out this interval; it is no longer what the
+# catching-up depends on.
+#
+# Two minutes is a compromise between the sidebar being right and `reload_nodes`
+# being a page query rather than a count. At the ten-second poll it is one real
+# load per twelve polls.
+RESYNC_AFTER_SECONDS = 120.0
+
+# How long the node list has to have been left alone before rebuilding it counts as
+# safe. **The whole objection to reordering is that it moves rows out from under a
+# cursor, so what has to be observed is the cursor, not the focus.** A reader
+# arrowing down the list is using it whether or not the terminal reports focus, and
+# a reader who has not touched it in half a minute is not, even with the keyboard
+# still nominally in it. Stamped from the two places that already watch this list
+# move — `nodes_scrolled` for the wheel and `on_node_highlighted` for the cursor.
+NODE_LIST_IDLE_SECONDS = 30.0
+
 # How close the cursor has to get to either end of the loaded messages before
 # the next page is fetched.
 PAGE_TRIGGER_DISTANCE = 3
@@ -501,6 +529,16 @@ class MeshConsoleApp(App):
     # When `poll()` last ran. A gap far longer than the interval is not slow
     # polling, it is this process not having been running — see STALE_GAP_INTERVALS.
     self.last_poll: Optional[float] = None
+
+    # When the node list was last really loaded — reordered, and asked which nodes
+    # exist — rather than patched in place. This is what "stale" is measured
+    # against, and it is deliberately not measured against the poll: the poll has
+    # been running the whole time and is exactly what does not fix this.
+    self.last_full_load: Optional[float] = None
+
+    # When the reader last moved in the node list, by cursor or by wheel. None
+    # until they touch it, which is the state a rebuild is safest in.
+    self.node_list_touched: Optional[float] = None
 
     # A resync that is owed but has not been run, because something was on top of
     # the main screen when it was asked for. Redrawing the screen underneath a
@@ -1026,6 +1064,12 @@ class MeshConsoleApp(App):
 
     self.rebuild_nodes(page["nodes"])
 
+    # Stamped here rather than in `refresh_sidebar`, because this is the call that
+    # actually answers "which nodes exist and in what order" — and it is the one
+    # every route to a real load goes through: startup, `r`, the filter, and
+    # `resync`. See `sidebar_is_stale`.
+    self.last_full_load = monotonic()
+
 
 
 
@@ -1223,6 +1267,10 @@ class MeshConsoleApp(App):
     `load_more_nodes` carries every guard this needs — re-entry, an active filter, and
     everything already loaded — so this decides only where "near the end" is.
     """
+    # The wheel half of "somebody is using this list"; `on_node_highlighted` is the
+    # cursor half. Both stamp it, because a rebuild has to stay away from either.
+    self.node_list_touched = monotonic()
+
     node_list = self.query_one("#nodes", ListView)
     if node_list.max_scroll_y - scroll_y <= NODE_SCROLL_TRIGGER_LINES:
       self.load_more_nodes()
@@ -1764,6 +1812,8 @@ class MeshConsoleApp(App):
     bottom rather than the viewport doing so — the same substitution the message
     pager already makes.
     """
+    self.node_list_touched = monotonic()
+
     index = event.list_view.index
     if index is None or self.node_search:
       return
@@ -4051,7 +4101,16 @@ class MeshConsoleApp(App):
     # than about whatever #main is showing — and the one view where it changes
     # fastest is the one where you are reading the messages it counts.
     self.refresh_channel_counts(stats)
-    self.refresh_node_rows(stats)
+
+    # **Replaced by a real load rather than followed by one.** Every so often the
+    # in-place refresh is not enough — it cannot reorder, insert or remove — so on
+    # those polls the sidebar is rebuilt instead, which does all three and re-reads
+    # the rows this would have patched. Doing both would mean two node queries on
+    # the same tick for one answer.
+    if self.sidebar_is_stale():
+      self.refresh_sidebar()
+    else:
+      self.refresh_node_rows(stats)
 
     self.flush_positions()
 
@@ -4169,10 +4228,63 @@ class MeshConsoleApp(App):
   # reader who has paged back. Every one of those is right while somebody is
   # reading and wrong the moment they have been gone for a minute.
   #
-  # So the answer is not to stop and start the poll. It is to notice the return and
-  # do, once, the three things the poll spends every ten seconds refusing to do —
-  # which is what `r` has always been for. This makes coming back to the window
-  # press it for you.
+  # So the answer is not to stop and start the poll. It is to do, from time to time,
+  # the three things the poll spends every ten seconds refusing to do — which is
+  # what `r` has always been for. This presses it for you.
+  #
+  # **What decides when is the age of the last real load, and nothing else.** The
+  # first version of this asked the terminal instead — resync when focus comes back
+  # after a minute away — and it was wrong in a way that took a second report from
+  # the Pi to see: a console left visible beside a browser is never blurred, so it
+  # never came back, so it stayed as stale as it had always been. Focus is an event
+  # and staleness is a duration, and only one of them is the question. `poll()` now
+  # rebuilds the sidebar on age (`sidebar_is_stale`), and the focus and gap paths
+  # below are the fast route to the same place for a reader who has demonstrably
+  # just returned — worth keeping because it makes coming back feel immediate, not
+  # worth depending on, because nothing guarantees a terminal reports focus at all.
+
+
+  def sidebar_is_stale(self) -> bool:
+    """Whether the node list has gone long enough without a real load to rebuild.
+
+    Two questions, and the second is the one that keeps this honest. Long enough
+    is `RESYNC_AFTER_SECONDS` since `reload_nodes` last ran — measured against that
+    rather than against the poll, because the poll has been running the whole time
+    and is precisely what does not fix this. Safe enough is the node list having
+    been left alone; see `node_list_left_alone`.
+
+    False while `last_full_load` is None, which is only true before `on_mount` has
+    loaded anything. There is nothing stale about a list that has not been drawn.
+    """
+    if self.last_full_load is None:
+      return False
+
+    if monotonic() - self.last_full_load < RESYNC_AFTER_SECONDS:
+      return False
+
+    return self.node_list_left_alone()
+
+
+
+
+  def node_list_left_alone(self) -> bool:
+    """Whether nobody has moved in the node list recently enough to be using it.
+
+    **Not "does the node list have focus".** Focus outlives use: `show_dashboard`
+    leaves the keyboard wherever it was, so a reader who opened a node an hour ago
+    and has been reading messages since still has the focus sitting in that list.
+    Gated on focus, the rebuild this exists to allow would never happen for them —
+    which is the shape of the bug that prompted all of this, one level down.
+
+    Never touched reads as left alone. A list nobody has put a cursor in is the
+    safest possible one to rebuild, not the least safe.
+    """
+    if self.node_list_touched is None:
+      return True
+
+    return monotonic() - self.node_list_touched >= NODE_LIST_IDLE_SECONDS
+
+
 
 
   def on_app_blur(self, event: events.AppBlur) -> None:

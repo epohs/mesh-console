@@ -71,10 +71,12 @@ from mesh_console.ui.widgets import (
   ConversationItem,
   Crumb,
   DetailView,
+  EmptyItem,
   MenuFooter,
   MessageItem,
   MessageList,
   NodeItem,
+  reconcile,
   striped,
 )
 
@@ -948,56 +950,77 @@ class MeshConsoleApp(App):
     stats: dict[str, Any],
   ) -> None:
     channel_list = self.query_one("#channels", ListView)
-    channel_list.clear()
 
     self.tracked_channel_indexes = [c["channel_index"] for c in channels]
     unread = self.unread_counts()
 
-    # `row` rather than the channel index, because the stripe is about position in
-    # the list and a tracked-channel set of 0, 1, 2 is not always what is listed.
-    for row, channel in enumerate(channels):
+    # Reused the way the node list's rows are, and for the same reason — see
+    # `reconcile`. This list is short and rebuilt far less often, so the blink was
+    # never the complaint here; it is the same blink all the same, and one list
+    # drawing itself by a different rule from the one beside it is how the two drift
+    # apart. Keyed on the channel index, with the direct message row keyed apart from
+    # it: a channel index of None is what that row has, and `is_dm` is what makes it
+    # unambiguous rather than the one row that happens to have no index.
+    showing = {
+      (item.is_dm, item.channel_index): item
+      for item in channel_list.children
+      if isinstance(item, ChannelItem)
+    }
+
+    wanted: list[ListItem] = []
+
+    for channel in channels:
       index = channel["channel_index"]
-      channel_list.append(
-        striped(
-          ChannelItem(
-            format_channel_label(channel),
-            channel_index=index,
-            count=channel.get("message_count", 0),
-            unread=unread.get(index, 0),
-          ),
-          row,
-        )
-      )
+      label = format_channel_label(channel)
+      count = channel.get("message_count", 0)
+      item = showing.get((False, index))
+      if item is None:
+        item = ChannelItem(label, channel_index=index, count=count, unread=unread.get(index, 0))
+      else:
+        item.set_row(label, count, unread.get(index, 0), "")
+      wanted.append(item)
 
     if self.show_direct_messages:
       # Displaying them is this process's decision; whether there are any to
       # display is the collector's, published in meta. Saying which it is beats
       # an unexplained empty list.
       stores_dms = self.read(get_meta_bool, "stores_direct_messages")
+      note = "" if stores_dms else "not archived"
+      total_dms = stats["stats"]["total_direct_messages"]
+      unread_dms = self.unread_direct_count()
 
-      channel_list.append(
-        striped(
-          ChannelItem(
-            DIRECT_MESSAGES_LABEL,
-            is_dm=True,
-            count=stats["stats"]["total_direct_messages"],
-            unread=self.unread_direct_count(),
-            note="" if stores_dms else "not archived",
-          ),
-          # It follows the channels, so it continues their parity rather than
-          # starting over.
-          len(channels),
+      item = showing.get((True, None))
+      if item is None:
+        item = ChannelItem(
+          DIRECT_MESSAGES_LABEL,
+          is_dm=True,
+          count=total_dms,
+          unread=unread_dms,
+          note=note,
         )
-      )
+      else:
+        item.set_row(DIRECT_MESSAGES_LABEL, total_dms, unread_dms, note)
+      wanted.append(item)
 
     if not channels and not self.show_direct_messages:
-      channel_list.append(striped(ListItem(Label("No channels")), 0))
+      wanted = [self.empty_row(channel_list, "No channels")]
 
-    # **A rebuilt list has a rebuilt cursor**, and Textual puts it on the first row
-    # as soon as anything is appended. So `r` in an open channel used to light up
-    # whichever channel happened to be first, and a rebuild that produced no rows
-    # left the list still claiming to point at one. Asked again here, which puts the
-    # cursor back on the open view or takes the claim away.
+    # The stripe used to be handed out here, one row at a time, with a comment on the
+    # direct message row about continuing the channels' parity rather than starting
+    # over. `reconcile` does it from each row's final position instead, which is that
+    # rule stated once for the whole list rather than per row.
+    reconcile(channel_list, wanted)
+
+    # **A rebuilt list has a rebuilt cursor**, which `clear()` used to see to and
+    # which surviving rows would otherwise carry through. Dropped explicitly for the
+    # reason `rebuild_nodes` gives at more length: what the rows do is being changed
+    # here, not what the list does.
+    channel_list.index = None
+
+    # And the mark that is not the cursor is asked for again. It says which view is
+    # open rather than where the arrow keys go, so a rebuild that produced no rows
+    # has to take the claim away as much as one that reordered them has to move it.
+    # `set_class` both ways, so it is as correct over reused rows as over new ones.
     self.update_sidebar_current()
 
 
@@ -1024,6 +1047,30 @@ class MeshConsoleApp(App):
     if not self.show_direct_messages:
       return 0
     return sum(self.unread_conversation_counts().values())
+
+
+
+
+  def empty_row(self, listing: ListView, text: str) -> EmptyItem:
+    """The one row a list with nothing in it shows, reused if it is already there.
+
+    Every other row in these lists is now matched to the widget already showing it
+    rather than built afresh (see `reconcile`), and this is the same move for the row
+    that says why there are no others. Without it a list that is empty and stays
+    empty — a filter matching nothing while the reader keeps typing, most often —
+    would tear its own message down and build it back on every pass, which is
+    precisely the blink being removed everywhere else.
+
+    Handed the text on every call rather than only when building, because the reason
+    a list is empty can change while it is empty: the node list says one thing when
+    the archive has no nodes and another when the filter matched none of them.
+    """
+    for child in listing.children:
+      if isinstance(child, EmptyItem):
+        child.set_text(text)
+        return child
+
+    return EmptyItem(text)
 
 
 
@@ -1059,18 +1106,48 @@ class MeshConsoleApp(App):
 
 
   def rebuild_nodes(self, nodes: list[dict[str, Any]]) -> None:
-    node_list = self.query_one("#nodes", ListView)
-    node_list.clear()
+    """Draw this page of nodes, reusing every row that is already showing one.
 
-    for row, node in enumerate(nodes):
-      node_list.append(striped(NodeItem(node), row))
+    **"Rebuild" is now a description of the result rather than of the method**, and
+    `reconcile` says at length why: tearing fifty rows down and building fifty back
+    blinks the sidebar empty for the better part of a second on the Pi, and the poll
+    does this every ten seconds. What actually changes between two polls is the
+    order, because a node that has just been heard sorts to the top of `last_seen
+    DESC` — so the rows move, and `set_node` refreshes what they say.
+
+    The cursor is still dropped afterwards, which is what a rebuild has always done
+    here and is the one part of the old behaviour that had to be asked for rather
+    than inherited: with the rows surviving, the highlight survives with them. It
+    could reasonably be kept — this list's widgets now follow their nodes, so a
+    highlight would follow the same node up the order — but that is a change to what
+    the sidebar does rather than to how it draws, and it is not this one.
+    """
+    node_list = self.query_one("#nodes", ListView)
+
+    showing = {
+      item.node_id: item
+      for item in node_list.children
+      if isinstance(item, NodeItem)
+    }
+
+    wanted: list[ListItem] = []
+    for node in nodes:
+      item = showing.get(node["node_id"])
+      if item is None:
+        item = NodeItem(node)
+      else:
+        item.set_node(node)
+      wanted.append(item)
 
     if not nodes:
-      node_list.append(
-        striped(
-          ListItem(Label("No matching nodes" if self.node_search else "No nodes")), 0
-        )
-      )
+      wanted = [self.empty_row(node_list, "No matching nodes" if self.node_search else "No nodes")]
+
+    reconcile(node_list, wanted)
+
+    # A rebuild has always left this list with no cursor in it — `clear()` set the
+    # index to None and nothing put it back — and the rows outliving the rebuild is
+    # exactly what would change that. Said out loud so it stays a decision.
+    node_list.index = None
 
     self.update_nodes_heading(len(nodes))
     # Same reason as `rebuild_channels`: a filter or an `r` rebuilds these rows and
@@ -2088,10 +2165,8 @@ class MeshConsoleApp(App):
     index refuse in the same place rather than inventing correspondents.
     """
     if self.local_node_id is None:
-      self.query_one("#messages", ListView).clear()
-      self.query_one("#messages", ListView).append(
-        striped(ListItem(Label("No direct messages")), 0)
-      )
+      listing = self.query_one("#messages", ListView)
+      reconcile(listing, [self.empty_row(listing, "No direct messages")])
       return
 
     conversations = self.read(db.fetch_conversations, self.local_node_id) or []
@@ -2111,31 +2186,52 @@ class MeshConsoleApp(App):
       selected = listing.children[listing.index]
       was_on = getattr(selected, "peer", None)
 
-    listing.clear()
     # The accent means unread here as it does on a direct message row, so the list
     # keeps the class that says which of the two meanings is in force.
     listing.add_class("direct")
 
-    for row, conversation in enumerate(conversations):
-      listing.append(
-        striped(
-          ConversationItem(
-            conversation,
-            local_label,
-            unread=unread.get(conversation["peer"], 0),
-          ),
-          row,
-        )
-      )
+    # **The list this mattered most for.** The node list is redrawn from the poll
+    # only when nobody is holding it; this one is redrawn on every poll the index is
+    # open, so the empty frame `reconcile` describes was landing in front of a reader
+    # who was looking straight at it, every ten seconds. Keyed on the peer, which is
+    # already how the cursor is put back below — a row here *is* a correspondent, and
+    # the recency order it is drawn in is the thing a message arriving changes.
+    showing = {
+      item.peer: item
+      for item in listing.children
+      if isinstance(item, ConversationItem)
+    }
+
+    wanted: list[ListItem] = []
+    for conversation in conversations:
+      peer = conversation["peer"]
+      item = showing.get(peer)
+      if item is None:
+        item = ConversationItem(conversation, local_label, unread=unread.get(peer, 0))
+      else:
+        item.set_conversation(conversation, local_label, unread.get(peer, 0))
+      wanted.append(item)
 
     if not conversations:
-      listing.append(striped(ListItem(Label("No direct messages")), 0))
+      reconcile(listing, [self.empty_row(listing, "No direct messages")])
       return
 
+    reconcile(listing, wanted)
+
+    # Put the cursor back on the correspondent it was on, not on the row number it
+    # was on — the order is by recency and a message arriving is exactly what moves
+    # somebody up it. Cleared first so that a peer who has dropped out of the list
+    # entirely leaves no cursor behind rather than leaving it pointing at whoever
+    # inherited the row number, which is what `clear()` used to see to.
+    #
+    # Asked of `wanted` rather than of the children, because a row on its way out is
+    # still among the children until its `Prune` is pumped and would have answered to
+    # the peer first.
     if was_on is not None:
-      for position, item in enumerate(listing.children):
+      listing.index = None
+      for item in wanted:
         if getattr(item, "peer", None) == was_on:
-          listing.index = position
+          listing.index = listing.children.index(item)
           break
 
 

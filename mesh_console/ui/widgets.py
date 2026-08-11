@@ -8,7 +8,7 @@ with an odd name, not an instruction to this program.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple, Optional
+from typing import Any, NamedTuple, Optional, Sequence
 
 from rich.style import Style
 from rich.text import Text
@@ -56,10 +56,116 @@ def striped(item: ListItem, index: int) -> ListItem:
   `nth-child(odd)` is 1-based and so picks the first, third and fifth rows; this is
   handed a 0-based index, which is why the test is for an even one. Returns the item
   so it can be written inline in an `append`.
+
+  **Sets the class both ways rather than only adding it**, because `reconcile` hands
+  rows back here after moving them and a row that has changed parity has to lose the
+  stripe as well as gain one. Adding only was correct while every row was newly built
+  and therefore unstriped to begin with; it would have left a shaded row shaded as it
+  moved up the list.
   """
-  if index % 2 == 0:
-    item.add_class(STRIPE_CLASS)
+  item.set_class(index % 2 == 0, STRIPE_CLASS)
   return item
+
+
+
+
+def reconcile(listing: ListView, wanted: Sequence[ListItem]) -> None:
+  """Make `listing` hold exactly `wanted`, in that order, reusing the rows it has.
+
+  **This exists because clearing a list and refilling it makes the list blink**, and
+  on a Pi it blinks for the better part of a second. Neither half of `clear()` plus
+  `append()` is synchronous in Textual: `clear` leaves the old rows in the tree with
+  a `Prune` posted to them, and each appended row composes its own children when its
+  `Mount` is pumped. Measured on the Pi against a real archive, the compositor paints
+  a sidebar with *no rows on it at all* about 450ms in — old rows out of the layout,
+  new ones not yet arranged into it — and the filled frame does not arrive for
+  another 250 to 400ms. Every rebuild, and since the poll started redrawing the node
+  list whenever nobody is holding it, that is every ten seconds.
+
+  Suspending repaints across the gap was tried first and is the wrong tool: a batch
+  freezes the whole screen, this redraw runs precisely when the reader's hands are
+  somewhere else — the compose box, most likely — and a mask long enough to cover the
+  Pi would sit on their keystrokes for the best part of a second, every ten seconds.
+
+  So the answer is not to hide the teardown but to stop doing one. A row is a widget
+  that already knows how to be updated in place (`NodeItem.set_node` and its
+  siblings), and between two polls the *set* of rows almost never changes — what
+  changes is their order, because a node that was just heard sorts to the top. Rows
+  that survive are moved rather than rebuilt, so there is nothing to be missing while
+  the compositor waits, and the expensive half of a rebuild is not spent either: 50
+  `NodeItem`s and their 100 labels cost about 150ms of blocked event loop on the Pi
+  just to construct.
+
+  The caller decides what `wanted` holds, because only the caller knows how to match
+  an archive row to the widget already showing it and how to refresh one that has
+  moved on. What happens here is the DOM work that is the same every time.
+
+  **Order is settled by naming neighbours, never by index.** A removed row is still
+  in `listing.children` until its `Prune` is pumped, so positions counted now are
+  positions that include rows on their way out. Walking backwards and asking only
+  that each row precede the next puts them all in order in one pass — moving a row to
+  before its successor cannot disturb the pairs already settled behind it — and rows
+  awaiting removal fall out from between them as they go.
+  """
+  keep = {id(item) for item in wanted}
+  for child in list(listing.children):
+    if id(child) not in keep:
+      child.remove()
+
+  # `parent` is set by `_register`, which mounting does synchronously, so this is
+  # "not mounted yet" and stays true only for rows this call has just built.
+  fresh = [item for item in wanted if item.parent is None]
+  if fresh:
+    listing.mount_all(fresh)
+
+  children = listing.children
+  for position in range(len(wanted) - 2, -1, -1):
+    if children.index(wanted[position]) > children.index(wanted[position + 1]):
+      listing.move_child(wanted[position], before=wanted[position + 1])
+
+  # **The stripe is what a redraw costs now, and it is priced per row that changes.**
+  # A `set_class` that changes nothing is free; one that does calls
+  # `App.update_styles`, which reapplies the stylesheet to that row and its labels.
+  # Moving one node to the top of a fifty row page shifts every row it passed, and
+  # all of them change parity — measured on the Pi, a node coming up from row 40 cost
+  # 40 flips and 122ms, against 6 flips and 20ms for one coming up from row 6. That
+  # is the whole of what a redraw costs once the teardown is gone, and it is still
+  # well under what the teardown cost unconditionally.
+  #
+  # **Asking for one update over the whole list instead is slower, and was tried.**
+  # `update_styles` walks the node and every descendant, so one call over the list is
+  # 151 nodes — the list, fifty rows, a hundred labels — where forty per-row calls
+  # are 120. Measured, that traded a 32-to-132ms spread for a flat 135ms: it pays for
+  # every row on every redraw, including the rows that did not move. The per-row cost
+  # is proportional to the rows that actually changed, which is the right shape.
+  for position, item in enumerate(wanted):
+    striped(item, position)
+
+
+
+
+class EmptyItem(ListItem):
+  """The single row a list shows when it has nothing to show.
+
+  A class of its own so it can be reused the way every other row now is. As a bare
+  `ListItem(Label(...))` it had no identity `reconcile` could match, so a list that
+  was empty and stayed empty tore its own "No messages" down and built it back every
+  poll — the blink this all exists to remove, on the one row still capable of it.
+  """
+
+
+  def __init__(self, text: str) -> None:
+    self._label = Label(text, markup=False)
+    super().__init__(self._label)
+
+
+  def set_text(self, text: str) -> None:
+    """Say something else, for a list whose reason to be empty has changed.
+
+    The node list has two — nothing in the archive, or nothing matching the filter —
+    and typing into the search box moves between them.
+    """
+    self._label.update(text)
 
 
 
@@ -260,6 +366,30 @@ class ChannelItem(ListItem):
 
 
 
+  def set_row(self, channel_name: str, count: int, unread: int, note: str) -> None:
+    """Redraw the whole row from a fresher archive row, for `reconcile`.
+
+    `set_counts` is the poll's version of this and moves the two numbers alone,
+    because those are the only parts a poll can change. A sidebar rebuild is where a
+    channel can also have been renamed, or where the collector's answer about
+    archiving direct messages has changed under the row that reports it, so this
+    takes every field the constructor takes.
+    """
+    if (channel_name, count, unread, note) == (
+      self.channel_name, self.count, self.unread, self.note
+    ):
+      return
+
+    self.channel_name = channel_name
+    self.count = count
+    self.unread = unread
+    self.note = note
+    self._label.update(self.label_text())
+    self.set_class(bool(unread), "unread")
+
+
+
+
 class NodeItem(ListItem):
   """A sidebar entry for one node: its name, and when it was last heard.
 
@@ -413,6 +543,40 @@ class ConversationItem(ListItem):
     if unread == self.unread:
       return
     self.unread = unread
+    self._apply_summary()
+    self.set_class(bool(unread), "unread")
+
+
+  def set_conversation(
+    self, conversation: dict[str, Any], local_label: str, unread: int
+  ) -> None:
+    """Redraw the row from a fresher archive row, for `reconcile`.
+
+    Everything on it moves while it is on screen and a message arriving moves all of
+    it at once: the count, the time of the newest message, and how much of the thread
+    is still waiting. The peer is what identifies the row, so it is the one thing
+    this cannot change — `reconcile` is only ever handed this row for the same
+    correspondent it was built for.
+
+    `local_label` is passed rather than remembered because the first line names both
+    ends, and this device's own short name arrives late — until it has sent a
+    NodeInfo the archive has only its hex id.
+    """
+    unchanged = conversation == self.conversation and unread == self.unread
+
+    # Assigned before the title is built, because `_peer_label` reads the peer's
+    # short name off it — and that name arriving is one of the things that moves
+    # this line.
+    self.conversation = conversation
+    self.unread = unread
+
+    # Said even when nothing else has, because the other half of the line is
+    # `local_label`, which this row does not keep and cannot compare against.
+    self._title.update(f"{local_label}  ›  {self._peer_label()}")
+
+    if unchanged:
+      return
+
     self._apply_summary()
     self.set_class(bool(unread), "unread")
 

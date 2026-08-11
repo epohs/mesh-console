@@ -81,7 +81,7 @@ Direct messages are sent from a conversation with one node, never from the direc
 
 ## To-Do
 
-1. `poll()` does its full job even when none of it is on screen. With the log viewer pushed on top it still runs the `fetch_stats` queries, re-renders the dashboard, refreshes the channel counts, and re-reads every `NodeItem` through `fetch_nodes_by_id` — all on the screen underneath. On the Pi that's a ~32% CPU spike for half a second, every 10 seconds, for nothing you can see. Guard the top of `poll()`: keep the reconnect and state-change check, skip the view work when `self.screen` isn't the main one.
+1. `poll()` does its full job even when none of it is on screen. With the log viewer pushed on top it still runs the `fetch_stats` queries, re-renders the dashboard, refreshes the channel counts, and re-reads every `NodeItem` through `fetch_nodes_by_id` — all on the screen underneath. On the Pi that's a ~32% CPU spike for half a second, every 10 seconds, for nothing you can see. Guard the top of `poll()`: keep the reconnect and state-change check, skip the view work when `self.screen` isn't the main one. The catching-up half of this is already built — `request_resync` defers exactly this way while a modal is up, and `poll()` runs what it owes once the stack comes back down — so the guard only has to mark a resync owed on the way past and the screen underneath is correct again when it is looked at.
 
 
 Licensed under the GNU AGPL-3.0

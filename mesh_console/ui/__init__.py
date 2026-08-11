@@ -21,6 +21,7 @@ from __future__ import annotations
 import sqlite3
 import webbrowser
 
+from time import monotonic
 from typing import Any, Optional
 
 from rich.style import Style
@@ -93,6 +94,27 @@ except ImportError:
 # max_poll_failures in RxOnly's rxonly.js. One missed read of a database being
 # written to is normal; three in a row is worth reporting.
 MAX_POLL_FAILURES = 3
+
+# How long the terminal has to have been behind another window before coming back
+# to it counts as returning to a stale session rather than glancing away.
+#
+# **The poll never stopped while you were gone**, and that is the thing this number
+# is about. What goes stale is what the poll deliberately declines to touch under a
+# reader's cursor — `refresh_node_rows` says so at length — so a minute away leaves
+# the node list in the order it was heard in a minute ago, missing every node first
+# heard since. A minute is long enough that nothing a reader does within one glance
+# rebuilds the list under them, and short enough that coming back from a coffee
+# always does.
+STALE_AFTER_SECONDS = 60.0
+
+# How many missed polls it takes before the gap is read as this process having been
+# stopped rather than as time passing: a suspended job, a closed laptop, a box that
+# was too loaded to run us. Focus reporting cannot see any of those — the terminal
+# never said anything, because from its side nothing happened — so this is the
+# backstop under `on_app_focus`, and the only one in a terminal that does not report
+# focus at all. Four intervals rather than two: a single late poll on a busy Pi is
+# normal and must not rebuild the sidebar.
+STALE_GAP_INTERVALS = 4
 
 # How close the cursor has to get to either end of the loaded messages before
 # the next page is fetched.
@@ -459,6 +481,34 @@ class MeshConsoleApp(App):
 
     self.poll_failures: int = 0
     self.positions_dirty: bool = False
+
+    # ------------------------------------------------------- the stale session
+    #
+    # When the terminal last went behind another window, and whether the message
+    # pane was following the live end at that moment. Both are None/False while
+    # the terminal has the focus.
+    #
+    # **Whether it was following has to be caught at the blur and cannot be asked
+    # again on the way back.** `has_more_newer` is the answer to "is there
+    # something below the loaded window", and the poll goes on running the whole
+    # time you are away — so on a busy channel it is legitimately True by the time
+    # you return, whether you left reading the live end or left paged back. Asked
+    # then, every return looks like a reader who had deliberately scrolled up, and
+    # the one case that most wants catching up is the one that never would be.
+    self.blurred_at: Optional[float] = None
+    self.blurred_following: bool = False
+
+    # When `poll()` last ran. A gap far longer than the interval is not slow
+    # polling, it is this process not having been running — see STALE_GAP_INTERVALS.
+    self.last_poll: Optional[float] = None
+
+    # A resync that is owed but has not been run, because something was on top of
+    # the main screen when it was asked for. Redrawing the screen underneath a
+    # modal is work nobody can see, and the log viewer is exactly where a reader
+    # sits while they are away from the console. The poll picks it up once the
+    # stack is back down to one; see `request_resync`.
+    self.resync_owed: bool = False
+    self.resync_following: bool = False
 
     # Watched so a swapped device or a rebuilt database is noticed rather than
     # rendered as though nothing happened.
@@ -3940,6 +3990,14 @@ class MeshConsoleApp(App):
 
   def poll(self) -> None:
     """Look for new messages, and for the archive coming back after a failure."""
+    # Measured before anything can fail, so a gap is the gap between two attempts
+    # rather than between two successes — an archive that was unreadable for five
+    # minutes is not a stale session, it is a reported outage, and it has its own
+    # banner.
+    now = monotonic()
+    gap = None if self.last_poll is None else now - self.last_poll
+    self.last_poll = now
+
     if self.conn is None and not self.reconnect():
       self.record_poll_failure()
       return
@@ -3957,6 +4015,24 @@ class MeshConsoleApp(App):
 
     self.update_device_bar(stats)
     self.check_for_state_change(stats)
+
+    # A resync deferred while the log viewer was on top, now that it is not. Asked
+    # here rather than from a screen hook because the poll is already the thing
+    # that runs on its own every few seconds, and being a few seconds late to
+    # rebuild a sidebar nobody has looked at yet costs nothing.
+    if self.resync_owed and len(self.screen_stack) == 1:
+      self.flush_positions()
+      self.call_later(self.resync)
+      return
+
+    # The process itself stopped running: suspended, slept, or starved. The
+    # terminal reported no blur because from its side nothing happened, so this is
+    # the only thing that notices — and what it notices is the same staleness
+    # `on_app_focus` handles, so it goes the same way out.
+    if gap is not None and gap > self.poll_interval * STALE_GAP_INTERVALS:
+      self.flush_positions()
+      self.request_resync(not self.has_more_newer)
+      return
 
     if self.viewing_messages:
       self.poll_messages()
@@ -4071,6 +4147,148 @@ class MeshConsoleApp(App):
       if self.newest_cursor == before and self.has_more_newer:
         self.has_more_newer = False
         self.update_message_status()
+
+
+
+
+  # ------------------------------------------------------------- stale sessions
+  #
+  # **Nothing here pauses the poll, and the symptom this answers looks exactly as
+  # though something had.** Leave the console in a window behind another one for
+  # twenty minutes, come back, and the nodes and the messages have stopped moving
+  # while the collector is demonstrably still writing. Nothing stopped: the
+  # `set_interval` in `on_mount` is never touched again, and Textual's own blur
+  # handler only flips `app_focus`. The poll ran every ten seconds of those twenty
+  # minutes.
+  #
+  # What goes stale is the work the poll deliberately declines to do while a reader
+  # might have a cursor in it. `refresh_node_rows` will not reorder the node list,
+  # will not insert a node first heard since the last load, and will not remove a
+  # pruned one — all three for good reasons, and all three add up to a sidebar that
+  # is as old as your absence. `poll_messages` will not splice a page in above a
+  # reader who has paged back. Every one of those is right while somebody is
+  # reading and wrong the moment they have been gone for a minute.
+  #
+  # So the answer is not to stop and start the poll. It is to notice the return and
+  # do, once, the three things the poll spends every ten seconds refusing to do —
+  # which is what `r` has always been for. This makes coming back to the window
+  # press it for you.
+
+
+  def on_app_blur(self, event: events.AppBlur) -> None:
+    """The terminal has gone behind something else.
+
+    Textual's driver asks for focus reporting (`\\x1b[?1004h`) on the way in, so
+    this arrives in Terminal.app, iTerm2, kitty and WezTerm. It does not arrive
+    under a tmux without `focus-events on`, and it says nothing about a suspended
+    or slept process — the gap check in `poll()` is what covers both.
+
+    Defined as `on_app_blur` alongside `App._on_app_blur`, which is a different
+    method on a different class in the MRO: Textual dispatches every match it
+    finds, so the framework's own handler still runs and `app_focus` is still
+    maintained. Verified rather than assumed.
+    """
+    self.blurred_at = monotonic()
+    self.blurred_following = self.viewing_messages and not self.has_more_newer
+
+
+
+
+  def on_app_focus(self, event: events.AppFocus) -> None:
+    """The terminal is in front again. Catch up if it was gone long enough."""
+    away = self.blurred_at
+    following = self.blurred_following
+    self.blurred_at = None
+
+    # No recorded blur means the focus event is not the far end of an absence —
+    # the first one at startup, or a terminal that reports focus without having
+    # reported the matching loss of it.
+    if away is None or monotonic() - away < STALE_AFTER_SECONDS:
+      return
+
+    self.request_resync(following)
+
+
+
+
+  def request_resync(self, following: bool) -> None:
+    """Ask for a catch-up, now or as soon as the main screen is on top again.
+
+    `following` is whether the message pane was at the live end when the session
+    went stale, and it decides whether the catch-up moves the reader. It is passed
+    in rather than worked out here because by the time this runs the answer has
+    usually changed — see `blurred_following`.
+    """
+    self.resync_owed = True
+    self.resync_following = following
+
+    # Under the log viewer this would rebuild a screen nobody can see, and the log
+    # viewer is where a reader most often is while the console is going stale
+    # underneath. `poll()` picks it up when the stack comes back down.
+    if len(self.screen_stack) == 1:
+      self.call_later(self.resync)
+
+
+
+
+  async def resync(self) -> None:
+    """Do once what the poll refuses to do continuously.
+
+    The same work `r` does, for the same reason and with one addition: `r` is a
+    reader asking, so it can leave them where they are, and this is a reader coming
+    back, so the message pane follows the live end if that is where they left it.
+
+    **This moves things under the cursor, and that is the trade.** The node list is
+    rebuilt whole, so it reorders, gains the nodes heard while you were away, and
+    loses the pruned ones — and whatever row was selected in it is not selected
+    afterwards. The reason this is acceptable here and not in the poll is the whole
+    of why the poll refuses: the objection to reordering is that it happens under
+    somebody's hands. This is the one instant it demonstrably is not, because the
+    terminal has just this moment been brought back and nothing has been typed into
+    it yet.
+
+    Focus is left where it was. A reader who was in the compose box comes back to
+    the compose box, which is the same call `show_sent_message` makes and for the
+    same reason.
+    """
+    # Both ways in can be taken for the same absence — a laptop closed on a
+    # backgrounded window comes back with a blur to answer *and* a poll gap to
+    # explain — and each queues a call. The flag is what one absence owes, so the
+    # second call finds it settled and has nothing to do.
+    if not self.resync_owed:
+      return
+
+    self.resync_owed = False
+    following = self.resync_following
+
+    if self.conn is None and not self.reconnect():
+      self.record_poll_failure()
+      return
+
+    # The sidebar first, because it is the half that cannot fix itself: the counts
+    # were current all along, the ordering and the membership have been frozen
+    # since the last real load.
+    self.refresh_sidebar()
+
+    # Whether a collector is listening is the one piece of state that moves without
+    # the archive moving, so a console that was up while its collector was
+    # restarted finds out here — the same reasoning as `action_refresh`.
+    self.assess_sending()
+
+    if self.viewing_messages:
+      if following:
+        await self.show_newest(take_focus=False)
+      else:
+        # Left paged back on purpose. Nothing is spliced in; the status line is
+        # re-asked so `g` is offered, which is what a reader in that position
+        # already expects to have to press.
+        self.update_message_status()
+    elif self.view == VIEW_DIRECT:
+      self.rebuild_conversations()
+    elif self.viewing_detail:
+      self.poll_detail()
+    else:
+      self.refresh_dashboard()
 
 
 

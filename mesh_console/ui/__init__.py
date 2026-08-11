@@ -4031,8 +4031,46 @@ class MeshConsoleApp(App):
       self.update_message_status()
       return
 
+    self.call_later(self.absorb_newer)
+
+
+
+
+  async def absorb_newer(self) -> None:
+    """Take the page the poll has seen arrive, and give the claim back if it can't.
+
+    **`has_more_newer` has to be raised before the fetch and that is what made it
+    a trap.** `load_newer` refuses to run while it is False — it is the pager's
+    own gate — so the poll has to claim there is something below before it can ask
+    for it. But `load_newer` has three ways of standing down after that claim has
+    been made: a page already in flight, a pane mid-positioning, and a read that
+    failed. None of them lowered the flag again, and the poll above reads a raised
+    flag as "the reader has paged back and has been told", so from that moment on
+    every poll took the branch above and no message was ever appended again.
+
+    Nothing cleared it either. The scroll trigger would have, but a reader sitting
+    at the live end scrolls nothing, which is precisely the reader this is for.
+    What it looked like was a channel that stopped receiving while the sidebar
+    count beside it went on climbing, and the only ways out were `g` or reopening
+    the channel.
+
+    So the claim is made here, where it can be taken back, and it is taken back by
+    asking whether the window actually moved rather than by trying to enumerate
+    which of `load_newer`'s exits was used. A window that did not move is a claim
+    about nothing, and the next poll is free to ask again.
+    """
+    before = self.newest_cursor
     self.has_more_newer = True
-    self.call_later(self.load_newer)
+
+    try:
+      await self.load_newer()
+    finally:
+      # `load_newer` lowers the flag itself when the page comes back empty, and
+      # sets it from the page's own meta when it does not; neither is undone here.
+      # This is only the case where nothing happened at all.
+      if self.newest_cursor == before and self.has_more_newer:
+        self.has_more_newer = False
+        self.update_message_status()
 
 
 

@@ -3799,10 +3799,12 @@ class MeshConsoleApp(App):
     handler for a paste. The emoji lands on the floor, and from the reader's side
     the box they were typing in simply ignores them.
 
-    The widget Textual set aside is the box they were typing in, so hand it there.
-    Only when nothing is focused: a paste that arrives with a live focus is an
-    ordinary one and already goes where it should, and stepping in front of that
-    would break pasting into whichever box is genuinely in use.
+    **Reaching this handler is itself the test that the paste was unclaimed.** A
+    focused `Input` consumes a paste in `Input._on_paste` and calls `event.stop()`
+    on it, so nothing that landed properly ever arrives here. That is why this asks
+    only *where* the text belongs and never whether something is focused: the first
+    version of this checked `self.focused is None` and refused every paste that
+    arrived after focus had been restored, which was most of them.
 
     Guarded on the target still being on screen, because `#compose` is hidden in
     the views with nowhere to send. An emoji quietly inserted into a box that
@@ -3811,16 +3813,51 @@ class MeshConsoleApp(App):
     if not event.text:
       return
 
-    target = self._last_focused_on_app_blur
-    if self.focused is not None or not isinstance(target, Input):
-      return
-    if not target.display or not target.visible:
+    target = self._paste_target()
+    if target is None:
       return
 
     # Same first-line-only rule the `Input` itself applies to a paste, so a
     # multi-line clipboard behaves here exactly as it would when focused.
     event.stop()
     target.insert_text_at_cursor(event.text.splitlines()[0])
+
+
+
+
+  def _paste_target(self) -> Optional[Input]:
+    """Which box an unclaimed paste belongs in, or None to let it fall.
+
+    First choice is the box that had the keyboard before the picker took the focus
+    away, which Textual set aside in `_last_focused_on_app_blur`.
+
+    That is empty more often than it looks. Textual clears it again on the way back
+    in, and the widget it held is only a text box if the reader was already typing —
+    reply to a message and the keyboard is on the message list, which is focusable
+    and cannot hold text. So the fallback is the text box that is on screen, and it
+    is an unambiguous one rather than a guess between two: `compose_available()`
+    gates the compose box on the view, and the node filter belongs to the single
+    view that has no compose box, so the two are never both live.
+
+    Scoped to the current screen so a modal's box cannot be filled from behind it.
+    """
+    last = self._last_focused_on_app_blur
+    if self._is_live_input(last):
+      return last
+
+    for candidate in self.screen.query(Input):
+      if self._is_live_input(candidate):
+        return candidate
+
+    return None
+
+
+
+
+  @staticmethod
+  def _is_live_input(widget) -> bool:
+    """Whether this is a text box a reader can actually see."""
+    return isinstance(widget, Input) and widget.display and widget.visible
 
 
 

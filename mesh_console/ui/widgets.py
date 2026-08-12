@@ -778,11 +778,22 @@ class MessageItem(ListItem):
       # would otherwise render as a bare `💪` from nobody, with no indication it
       # was aimed at anything at all.
       #
-      # Deliberately not styled as the bar. The bar is a quote of the parent —
-      # background, label, excerpt — and dressing this like one would promise a
-      # message that is not in the archive.
+      # **Styled as the bar, which reverses what this comment used to say.** The
+      # old reasoning was that the bar quotes a parent and there is no parent to
+      # quote, so the fill would promise a message the archive does not have. That
+      # is right about the excerpt and too strong about the band: what the band
+      # actually says is "this message answers something", which is exactly the
+      # fact an orphan reaction needs stated. RxOnly reached the same conclusion
+      # and now draws it as `.message-reply-bar .message-reply-untracked`; these
+      # are those two classes, and the leading asterisk is its asterisk.
+      #
+      # Nothing here has to un-promise a link the way the web side does — RxOnly
+      # had to demote its `<a>` to a `<p>` and rescope a hover rule, while this
+      # bar was never clickable in either state.
       yield Label(
-        "reacting to an earlier message", markup=False, classes="message-orphan-note"
+        "* Reacting to an earlier message",
+        markup=False,
+        classes="message-reply-bar message-reply-untracked",
       )
     else:
       reply_line = format_reply_line(self.message)

@@ -668,16 +668,24 @@ MessageHeader > .message-header--node {
   text-overflow: ellipsis;
 }
 
-/* The note that stands where the reply bar would, on a reaction whose parent is
- * not in the archive. Muted like the bar and italic, but with no background: the
- * bar's fill is what makes it read as a quoted thing, and there is nothing here
- * being quoted. RxOnly renders the same sentence in `.message-orphan-note`. */
-.message-orphan-note {
-  width: 100%;
-  color: $rx-text-muted;
+/* The bar on a reaction whose parent is not in the archive: the same band, in the
+ * same place, carrying both classes. It used to be a note with no background, on
+ * the argument that the fill is what makes the strip read as a quoted thing — but
+ * the fill's actual claim is "this message answers something", which is true of an
+ * orphan reaction and is the one thing worth saying about it. What must not be
+ * claimed is a parent that can be read, and the missing excerpt is what declines
+ * that: `* Reacting to an earlier message` is plainly not a quote of anything.
+ *
+ * So this adds italic to the bar and nothing else — every other property is
+ * inherited by carrying `.message-reply-bar` too, which is the point of splitting
+ * it in two. It has to sit after that rule: the two selectors are one class each
+ * and therefore equal in specificity, so source order is what decides.
+ *
+ * RxOnly spells this the same way, `.message-reply-bar .message-reply-untracked`,
+ * and had one problem this medium does not: its bar is an `<a>`, so it also had to
+ * become a `<p>` and give up a hover rule. Nothing here was ever clickable. */
+.message-reply-untracked {
   text-style: italic;
-  text-wrap: nowrap;
-  text-overflow: ellipsis;
 }
 
 /* **Every message's words are stepped one column in from the row naming its

@@ -3787,6 +3787,44 @@ class MeshConsoleApp(App):
 
 
 
+  def on_paste(self, event: events.Paste) -> None:
+    """Give the macOS emoji picker's insertion somewhere to land.
+
+    Picking an emoji on a Mac does not arrive as a keystroke. The terminal receives
+    it as a bracketed paste, and it is delivered while the picker window is still
+    the thing holding the OS focus. Textual answers that focus loss by clearing
+    focus outright — `App._watch_app_focus` calls `screen.set_focus(None)` and
+    remembers who had it — so by the time the paste arrives `App.on_event` has no
+    focused widget to route it to and hands it to the screen instead, which has no
+    handler for a paste. The emoji lands on the floor, and from the reader's side
+    the box they were typing in simply ignores them.
+
+    The widget Textual set aside is the box they were typing in, so hand it there.
+    Only when nothing is focused: a paste that arrives with a live focus is an
+    ordinary one and already goes where it should, and stepping in front of that
+    would break pasting into whichever box is genuinely in use.
+
+    Guarded on the target still being on screen, because `#compose` is hidden in
+    the views with nowhere to send. An emoji quietly inserted into a box that
+    nobody can see is a worse answer than the dropped keystroke it replaces.
+    """
+    if not event.text:
+      return
+
+    target = self._last_focused_on_app_blur
+    if self.focused is not None or not isinstance(target, Input):
+      return
+    if not target.display or not target.visible:
+      return
+
+    # Same first-line-only rule the `Input` itself applies to a paste, so a
+    # multi-line clipboard behaves here exactly as it would when focused.
+    event.stop()
+    target.insert_text_at_cursor(event.text.splitlines()[0])
+
+
+
+
   def can_jump_newest(self) -> bool:
     """Whether there is a live end to jump to that the cursor is not already on.
 

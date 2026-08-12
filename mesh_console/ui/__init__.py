@@ -480,6 +480,14 @@ class MeshConsoleApp(App):
     "compose": "#breadcrumbs",
   }
 
+
+  # The two text boxes, in the order an unclaimed paste should prefer them — the
+  # same pair `typing_in_a_box()` names, and here the order carries the meaning.
+  # The node filter is in the sidebar and so is on screen in every view, which
+  # makes "the first box on screen" the wrong question and this list the right
+  # one. See `_paste_target()`, which is the only reader.
+  PASTE_TARGETS = ("#compose", "#node-filter")
+
   # Every heading the rule can be drawn under, which is what makes clearing it one
   # loop rather than a branch per panel.
   PANEL_HEADING_SELECTORS = ("#channels-heading", "#nodes-heading", "#breadcrumbs")
@@ -3834,10 +3842,19 @@ class MeshConsoleApp(App):
     That is empty more often than it looks. Textual clears it again on the way back
     in, and the widget it held is only a text box if the reader was already typing —
     reply to a message and the keyboard is on the message list, which is focusable
-    and cannot hold text. So the fallback is the text box that is on screen, and it
-    is an unambiguous one rather than a guess between two: `compose_available()`
-    gates the compose box on the view, and the node filter belongs to the single
-    view that has no compose box, so the two are never both live.
+    and cannot hold text. So there has to be a fallback, and which box it picks is
+    the whole substance of this method.
+
+    **`PASTE_TARGETS` order, never DOM order.** An earlier version of this took the
+    first `Input` on screen, on the belief that only one is ever live at a time. That
+    is false: the node filter sits in the sidebar and is on screen in every view,
+    including while reading a channel, and it is declared before the compose box —
+    so every emoji picked for a reply went into the node filter instead.
+
+    That the reader was *using* the node filter is the case the first branch already
+    answers, because then it had the keyboard and was set aside by name. Reaching the
+    fallback means a list had the keyboard, and then the box worth filling is the one
+    for composing when there is one, and the filter only when there is not.
 
     Scoped to the current screen so a modal's box cannot be filled from behind it.
     """
@@ -3845,9 +3862,10 @@ class MeshConsoleApp(App):
     if self._is_live_input(last):
       return last
 
-    for candidate in self.screen.query(Input):
-      if self._is_live_input(candidate):
-        return candidate
+    for selector in self.PASTE_TARGETS:
+      for candidate in self.screen.query(selector):
+        if self._is_live_input(candidate):
+          return candidate
 
     return None
 

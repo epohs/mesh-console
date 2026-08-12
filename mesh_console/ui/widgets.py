@@ -600,10 +600,66 @@ class MessageList(ListView):
 
   `start_row` is pushed in rather than read off the app, so this stays a widget
   that can be mounted and driven without one.
+
+  **It also allows the pane to be scrolled a few lines past its last message**,
+  which is `OVERSCROLL_LINES` below.
   """
 
 
   start_row: int = 0
+
+  # How far past the last message this pane can be scrolled, in blank lines.
+  #
+  # Jason's, and it exists because the bottom of the list was not reachable as a
+  # resting place. The read line sits `read_margin` lines up from the bottom — a
+  # fifth of the pane, so eight or ten lines on a tall terminal — and a channel
+  # resumed by putting its last-read message on that line therefore lands with
+  # everything newer *below* the fold. On a fully-read channel that meant coming
+  # back to it left the last message or two off screen, even though they were
+  # read and the sidebar said so. Four blank lines give the bottom of a channel
+  # somewhere to sit, so "the end" is a position the pane can actually hold.
+  #
+  # Deliberately blank space rather than blank rows: a row would be a `ListItem`,
+  # which is a thing the cursor can land on and `render_rows` would have to
+  # exclude from its diff. This is a scroll limit and nothing else — nothing is
+  # rendered, nothing is selectable, and the arrow keys still stop at the last
+  # real message.
+  OVERSCROLL_LINES = 4
+
+
+  @property
+  def max_scroll_y(self) -> int:
+    """The scroll limit, extended past the content by `OVERSCROLL_LINES`.
+
+    **Measured from the last row's own bottom, not from `virtual_size`**, and the
+    difference decides the one case that matters. A `ListView`'s virtual size
+    inflates to fill its container, so a three-line channel in a forty-line pane
+    reports a virtual height of forty — indistinguishable from a channel that
+    fills the pane exactly. Extending *that* would let a channel with room to
+    spare scroll its first message off the top to reveal blank space, which is a
+    strictly worse view of it.
+
+    So the overscroll is offered only to a channel whose content already outruns
+    the pane. There, four more lines cost nothing that was not already scrolled
+    off; where everything fits, the limit stays where Textual put it and the pane
+    cannot be scrolled at all.
+    """
+    limit = super().max_scroll_y
+
+    height = self.scrollable_content_region.height
+    children = self.children
+    if not children or not height:
+      return limit
+
+    # `virtual_region` is in the scrollable content's own coordinates, so this is
+    # the true extent of what has been laid out. Before the first layout pass every
+    # row reports y=0 and this reads as "it all fits" — which returns the ordinary
+    # limit and is the safe answer to give while nothing has positions yet.
+    content_bottom = children[-1].virtual_region.bottom
+    if content_bottom <= height:
+      return limit
+
+    return max(limit, content_bottom + self.OVERSCROLL_LINES - height)
 
 
   def _select_start(self) -> bool:

@@ -460,11 +460,12 @@ class MeshConsoleApp(App):
     self.has_more_newer: bool = False
     self.is_loading: bool = False
 
-    # Where the pane scrolls to when a channel opens: the row holding the message
-    # this reader last read, put back on the read line so that everything above it
-    # is read and the unread messages sit below. Named by message and resolved to a
-    # row by `rebuild_rows()`, because which row holds a message depends on what
-    # else is loaded.
+    # Where the pane scrolls to when a channel opens *that still has something
+    # unread in it*: the row holding the message this reader last read, put back on
+    # the read line so that everything above it is read and the unread messages sit
+    # below. Named by message and resolved to a row by `rebuild_rows()`, because
+    # which row holds a message depends on what else is loaded. A channel with
+    # nothing unread ignores this and opens at its end — see `messages_fully_read`.
     self.resume_message_id: Optional[int] = None
     self.resume_index: int = 0
 
@@ -490,7 +491,7 @@ class MeshConsoleApp(App):
     # at whatever scroll position the rebuild left, firing scroll events. Marking
     # read off those intermediate positions advanced the marker past messages nobody
     # had seen, intermittently, depending on how many refreshes landed first.
-    # See `mark_read_from_viewport` and `scroll_row_to_read_line`.
+    # See `mark_read_from_viewport` and `position_message_pane`.
     self.positioning: bool = False
 
     # Which act of positioning owns the flag. The scroll that lands a channel is
@@ -2383,7 +2384,7 @@ class MeshConsoleApp(App):
     """
     self.flush_positions()
 
-    # **Raised here rather than in `scroll_row_to_read_line`, and the difference is
+    # **Raised here rather than in `position_message_pane`, and the difference is
     # the whole of an intermittent bug.** Rendering a window awaits, and a pane that
     # is mid-rebuild fires scroll events while it does — so the flag has to be up
     # before the first await, not after the last one. Set late, reopening a channel
@@ -2445,15 +2446,23 @@ class MeshConsoleApp(App):
 
     await self.render_rows()
 
-    # **Nothing is selected, and the pane scrolls instead.** The resume row goes to
-    # the read line — `read_margin` lines up from the bottom — so that everything
-    # above it is exactly what this reader had read, and the unread messages sit on
-    # screen below it. That is the same landing the cursor used to make; what is
-    # gone is the cursor, because a highlight on an arbitrary row claimed a choice
-    # the reader had not made.
+    # **Nothing is selected, and the pane scrolls instead.** That is the same landing
+    # the cursor used to make; what is gone is the cursor, because a highlight on an
+    # arbitrary row claimed a choice the reader had not made. Where it scrolls to is
+    # `position_message_pane`, which has the two landings and the argument for them.
     messages_view.index = None
-    self.set_read_row(self.resume_index)
-    self.scroll_row_to_read_line(self.resume_index)
+
+    # **A channel with nothing unread in it opens at its end, and one with something
+    # left to read opens at the resume point.** `land_on` is neither: arriving from a
+    # row that named a message is a statement about where to be that outranks both,
+    # so it keeps the resume landing on the message it asked for.
+    to_end = land_on is None and self.messages_fully_read()
+
+    # The read row is where the first arrow key lands. At the end that is the last
+    # message — the reader is up to date, so the message they are up to is the newest
+    # one, not whatever the marker happened to stop on.
+    self.set_read_row(len(self.rows) - 1 if to_end else self.resume_index)
+    self.position_message_pane(self.resume_index, to_end=to_end)
     messages_view.focus()
     self.update_message_status()
 
@@ -3885,6 +3894,37 @@ class MeshConsoleApp(App):
   # --------------------------------------------------------------- read tracking
 
 
+  def messages_fully_read(self) -> bool:
+    """Whether the loaded view has nothing unread left in it.
+
+    **Asked of the stored read cursor and not of `resume_index`**, and that is the
+    whole point of it. The resume row is where reading got to, and on a fully-read
+    channel it is the last row — but only if the last thing that moved the marker
+    was the bottom-of-a-loaded-channel branch of `mark_read_from_viewport`. A reader
+    whose final scroll stopped with the newest message inside the read margin left
+    the marker a row or two short while that same branch, reached later, cleared the
+    sidebar count. Trusting the row would then open a channel the badge calls read
+    at a resume point three messages up, which is the report this answers.
+
+    `has_more_newer` first, because a cursor at the end of the *loaded* window says
+    nothing about a channel with pages below it — those messages are unread and not
+    yet fetched. A cursor of None is a channel never read at all.
+    """
+    if self.has_more_newer or not self.messages:
+      return False
+
+    cursor = self.positions.cursor(*self.current_scope())
+    if cursor is None:
+      return False
+
+    # The newest of everything loaded, reactions included — the same value the
+    # bottom-of-the-channel branch stores, so the two agree about what "the end"
+    # is rather than each deciding for itself.
+    return db.cursor_of(max(self.messages, key=db.cursor_of)) <= cursor
+
+
+
+
   def read_margin(self, height: int) -> int:
     """How far up from the bottom of the pane the read line sits, in lines."""
     return max(READ_MARGIN_MIN_LINES, int(height * READ_MARGIN_FRACTION))
@@ -3952,9 +3992,21 @@ class MeshConsoleApp(App):
     ):
       return
 
-    at_the_end = (
-      not self.has_more_newer
-      and messages_view.scroll_offset.y >= messages_view.max_scroll_y
+    # **The last message being on screen is the end, not the scrollbar being at its
+    # stop.** Those were the same thing until the pane could be scrolled past its
+    # content: `scroll_y >= max_scroll_y` now means "into the blank lines below the
+    # channel", and reading it that way would have made the four lines compulsory —
+    # a reader who scrolled until the newest message was fully visible and stopped
+    # there, which is every reader, would have been left holding the unread count
+    # this branch exists to clear. So the question is asked about the message.
+    #
+    # Its *bottom*, unlike the read line's rule for rows in the middle of the list,
+    # because there is nothing below it to go on to: a long final message whose top
+    # has cleared the read line but whose last lines have not been on screen has not
+    # been read, and there is no next scroll coming to finish it.
+    at_the_end = not self.has_more_newer and (
+      rows_on_screen[-1].virtual_region.bottom
+      <= messages_view.scroll_offset.y + height
     )
 
     if at_the_end and self.messages:
@@ -4042,7 +4094,7 @@ class MeshConsoleApp(App):
   def restore_viewport(self, anchor: Optional[tuple[int, int]]) -> None:
     """Put the pane back where `viewport_anchor` found it.
 
-    Deferred for the same reason `scroll_row_to_read_line` is: the rows this has to
+    Deferred for the same reason `position_message_pane` is: the rows this has to
     measure have just been rebuilt and are not laid out yet.
 
     **The failure mode this is guarding against is a loop, not a jump.** Scrolling
@@ -4117,8 +4169,26 @@ class MeshConsoleApp(App):
 
 
 
-  def scroll_row_to_read_line(self, index: int) -> None:
-    """Put one row's top where the read line is, so everything above it counts read.
+  def position_message_pane(self, index: int, *, to_end: bool = False) -> None:
+    """Put the pane where the channel being opened should open.
+
+    Two landings, and which one is right is a question about the channel rather
+    than about this pane:
+
+    `to_end` is **the default position of a fully-read channel** — the last message
+    against the bottom with `MessageList.OVERSCROLL_LINES` of blank space beneath
+    it. A channel with nothing unread in it has no resume point worth honouring:
+    every message is behind you, so the end is where you left off, and the blank
+    lines are what make the end a place the pane can rest. Before those lines
+    existed this landing did not exist either — the read line is a fifth of the
+    pane up from the bottom, so putting the last message *there* pushed nothing
+    below it except the fold, and the reader came back to a channel whose final
+    message or two were off screen despite being read.
+
+    Otherwise one row's top goes on the read line, so everything above it is
+    exactly what this reader had read and the unread messages sit below. That is
+    the resume landing, and it still belongs to any channel that has something
+    left to read in it.
 
     Deferred with `call_after_refresh` because a row's `virtual_region` is a fact
     about a laid-out list, and this is called immediately after `render_rows` has
@@ -4167,14 +4237,45 @@ class MeshConsoleApp(App):
       # marker stays where it was, which is the safe direction.
       self.end_positioning(epoch)
 
-      if not rows or index < 0 or index >= len(rows) or not height:
+      if not rows or not height:
         return
 
-      messages_view.scroll_to(
-        y=rows[index].virtual_region.y - (height - self.read_margin(height)),
-        animate=False,
-        immediate=True,
-      )
+      if to_end:
+        # `scroll_end` goes to `max_scroll_y`, which `MessageList` has already
+        # extended past the last message — so this is the blank-lines landing
+        # without this having to know how many lines that is.
+        messages_view.scroll_end(animate=False, immediate=True)
+        self.mark_read_from_viewport()
+        return
+
+      if index < 0 or index >= len(rows):
+        return
+
+      target = rows[index].virtual_region.y - (height - self.read_margin(height))
+
+      # **An unread message below the fold is the bug this whole change is about,
+      # and it is not only fully-read channels that had it.** The resume row goes on
+      # the read line whether or not what follows it fits underneath, so a channel
+      # with two unread messages and a tall read margin opened with the newer one
+      # off screen — waiting behind a scroll the reader had no reason to think was
+      # needed. Where the tail does fit, drop far enough that its last line is on
+      # screen.
+      #
+      # Only when the whole of it is loaded: with `has_more_newer` there is more
+      # unread below than this pane could show however it is scrolled, and reading
+      # forward from the resume point is then exactly the right landing.
+      #
+      # The second condition is what keeps this from swallowing the resume point. A
+      # long unread tail would need a scroll that carried the resume row off the top
+      # of the pane, and a landing that hides where you had read to — marking the
+      # rows in between read on the way past — is worse than a scroll. So the drop
+      # is taken only while the resume row survives it.
+      if not self.has_more_newer:
+        tail = rows[-1].virtual_region.bottom - height
+        if tail > target and rows[index].virtual_region.y >= tail:
+          target = tail
+
+      messages_view.scroll_to(y=target, animate=False, immediate=True)
       self.mark_read_from_viewport()
 
     self.call_after_refresh(scroll)

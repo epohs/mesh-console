@@ -109,13 +109,94 @@ Screen {
  * now, which is how the web does it too.
  */
 
+/* The blank row under a heading is where the focus rule is drawn, which is what makes
+ * the rule cost nothing — see the note on `.focused-panel` below. The row is a
+ * `margin-bottom` here and becomes a `border-bottom` there, and it is one row either
+ * way: a margin sits outside the widget's box and a border inside it, so swapping one
+ * for the other changes what the row contains without changing how many there are.
+ *
+ * **Reserving the border in `transparent` instead would have been tidier and is
+ * wrong.** A Textual border draws box-drawing glyphs and `transparent` resolves to the
+ * colour behind it, so an unfocused heading would be drawing a `─` in the background
+ * colour on the background — invisible, right up until the colour is taken away. On a
+ * terminal that reports no colour system at all, which is half of what
+ * `MeshConsoleApp.monochrome` detects, every heading would draw a visible rule and the
+ * cue would say every panel has the keyboard. Verified both ways; NO_COLOR alone is
+ * fine, because Textual converts to grey rather than dropping the colour, and it is
+ * the dumb-terminal case that this avoids.
+ *
+ * **Every rule below states all four margins, and that is not verbosity.** Textual
+ * does not merge the sides of `margin` across rules the way it reads: the
+ * highest-specificity rule that mentions any margin at all supplies the whole
+ * `Spacing`, and the others are discarded outright. This was already costing something
+ * before the focus rule existed — `#nodes-heading` set `margin-top` and thereby threw
+ * away the `margin-bottom` in `.panel-heading`, so the Nodes heading had no blank row
+ * under it and the filter box sat against it while the Channels list had its row. It
+ * has one now, which is the one-row layout change this cue brought with it and is what
+ * the two headings were always meant to look like.
+ */
+
 .panel-heading {
   background: transparent;
   color: $rx-text-secondary;
   text-style: bold;
   padding: 0 1;
-  margin-bottom: 1;
+  margin: 0 0 1 0;
   width: 100%;
+}
+
+/* -------------------------------------------------
+   Which panel the keyboard is talking to
+   ------------------------------------------------- */
+
+/* A rule under the heading of the panel that has focus, and nothing under the other
+ * two.
+ *
+ * **The cue this replaces was the row cursor, and it could not carry it.** Textual
+ * paints a focused list's cursor in `$block-cursor-background` and an unfocused one's
+ * in a tint of it, which is a real distinction and the wrong one to depend on: the
+ * message pane deliberately has *no* selection until an arrow key asks for one, so a
+ * focused message pane showed nothing at all, and the sidebar's two strengths of blue
+ * are a difference you can only see by comparing two lists at once. Jason's, and the
+ * ask was for something that says which panel is live without having to be compared
+ * with anything.
+ *
+ * **A rule rather than a colour, a border or a band**, for three reasons. It is the
+ * separator this interface already uses — `#device-bar`'s `border-bottom`, in the
+ * same `solid` — so it adds a use of an existing mark rather than a new kind of mark.
+ * It costs no space: the blank row under every heading was already there as a margin,
+ * and this spends it, so nothing on screen moves as focus travels. And it survives a
+ * terminal with no colour, which a colour swap cannot: what says "focused" is a line
+ * being *there*, and the palette only decides what shade it is.
+ *
+ * `margin-bottom: 0` beside each rule is what keeps the count at one row — the margin
+ * this replaces has to go while the border is up, or the heading gains a row and the
+ * list below it drops one every time the keyboard arrives.
+ *
+ * `$rx-link` is the interactive accent — the row cursor, a crumb you can click, the
+ * compose box's resting border. "The keyboard is here" is the same family of fact.
+ * Deliberately not `$rx-accent-node`: gold means "this is where the typing goes" on
+ * `#compose:focus` and `#node-filter:focus`, and a panel is not a text box.
+ *
+ * The main pane's heading is `#breadcrumbs`, which is the one label above it and
+ * already the thing that says which of the three panes is showing. It gets the same
+ * reserved row for the same reason — see the note there.
+ */
+
+.panel-heading.focused-panel,
+#breadcrumbs.focused-panel {
+  margin: 0;
+  border-bottom: solid $rx-link;
+}
+
+/* And the Nodes heading again, because it is the one with a margin above it to keep:
+ * `margin: 0` in the rule above would win on specificity here and take the gap between
+ * the two sidebar panels with it. See the note on all four sides above.
+ */
+
+#nodes-heading.focused-panel {
+  margin: 1 0 0 0;
+  border-bottom: solid $rx-link;
 }
 
 /* Capped where RxOnly caps it: `max-height: calc(5 * 2.25rem)` on
@@ -205,10 +286,14 @@ Screen {
 /* The gap Jason asked for, and the one the web already had: `gap: var(--space-lg)`
  * between the two sidebar panels is the largest space in that column, so it is
  * the one that gets the terminal's whole row.
+ *
+ * The row *below* is `.panel-heading`'s and is restated here rather than inherited,
+ * because a rule naming any margin supplies all of them — this one used to name only
+ * the top and silently took the bottom away. See the note on `.panel-heading`.
  */
 
 #nodes-heading {
-  margin-top: 1;
+  margin: 1 0 1 0;
 }
 
 #nodes {
@@ -396,10 +481,19 @@ ChannelItem.unread {
  * Every other step is, and takes the `link-*` properties below.
  */
 
+/* The trail is the main pane's heading, so it owns the same blank row the sidebar's two
+ * headings do and lights it the same way when the pane below has focus — see
+ * `.focused-panel`. The row is not new: it was the panes' own `padding-top` and the
+ * message list's `margin-top`, both of which give it up below, so the gap between the
+ * trail and what it names is the same one line it always was, now spent from one place
+ * rather than three.
+ */
+
 #breadcrumbs {
   background: transparent;
   color: $rx-text-secondary;
   padding: 0 1;
+  margin: 0 0 1 0;
 
   /* A crumb you can click, in RxOnly's `.breadcrumbs a` colour — and its
    * `:hover`, which is the half that matters. On the web a cursor changes shape over
@@ -425,19 +519,23 @@ ChannelItem.unread {
 
 #dashboard-pane {
   height: 1fr;
-  padding: 1 2;
+  padding: 0 2 1 2;
 }
 
-/* A row below the trail, which is what the other two panes already had and this
- * one did not. `#dashboard-pane` and `#detail-pane` get it out of their own
- * `padding-top`, standing in for RxOnly's `.main-content { padding-top: space-md }`;
- * a ListView has no padding of its own to spend, so the message list sat flush
- * against the breadcrumbs while its two siblings did not.
+/* **The row below the trail moved to the trail, and all three panes gave up their
+ * own.** It used to be spent three different ways for the same one line — this pane's
+ * and `#detail-pane`'s `padding-top`, standing in for RxOnly's
+ * `.main-content { padding-top: space-md }`, and `#messages`'s `margin-top`, because a
+ * ListView has no padding of its own to spend. Which was three places to keep in step
+ * and, more to the point, three rows that belong to a pane rather than to the heading
+ * above it: a rule drawn in any of them would have been a line under the top of a
+ * pane rather than under the trail naming it.
  *
- * `margin` rather than `padding`, so the gap shows #main's background rather than
- * the list's own `$surface` — the blank row belongs between the trail and the list
- * rather than to either of them. On the web the same gap is the breadcrumbs' own
- * `padding-bottom: var(--space-sm)`, which a terminal cannot spend half a row on.
+ * So `#breadcrumbs` reserves the row as a `border-bottom` and these three take
+ * nothing. The gap is unchanged and now shows #main's background in every view rather
+ * than only in the one that used a margin. On the web it is the breadcrumbs' own
+ * `padding-bottom: var(--space-sm)`, which a terminal cannot spend half a row on —
+ * so a border there is also the nearer of the two to what RxOnly says.
  */
 
 /* **The same background as the dashboard, which means none of its own.** Jason's,
@@ -459,7 +557,6 @@ ChannelItem.unread {
 
 #messages {
   height: 1fr;
-  margin-top: 1;
   background: transparent;
   background-tint: transparent;
 }
@@ -471,7 +568,7 @@ ChannelItem.unread {
 #detail-pane {
   display: none;
   height: 1fr;
-  padding: 1 2;
+  padding: 0 2 1 2;
 }
 
 /* The map link. `link-*` rather than anything on the span itself: a span carrying a

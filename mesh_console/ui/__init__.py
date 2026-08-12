@@ -33,6 +33,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
 from mesh_console import __version__, db
@@ -320,6 +321,34 @@ class MeshConsoleApp(App):
     # away. It drops out only while a text box already holds the keyboard, which
     # includes the filter box itself.
     Binding("f", "filter_nodes", "Filter nodes"),
+    # Out of the filter box and into what it filters, which is the other half of `f`.
+    #
+    # **The one binding in this list that exists *for* a focused text box**, and the
+    # only reason it can: `Input` binds neither arrow key vertically, so `down` bubbles
+    # out of the box and reaches this. It is offered nowhere else — see `check_action`,
+    # which gates it on the filter having the keyboard, because `down` belongs to
+    # whichever list or pane is focused everywhere else and must not be taken from it.
+    #
+    # Shown, unlike `tab`. While the filter has the keyboard every other letter drops
+    # out of the footer, so there is room; and this is the moment the key is worth
+    # naming, since a reader who has just typed a filter has nowhere else to be told
+    # that the results are one keypress away.
+    #
+    # **`priority` for the footer's sake rather than the key's, and it is needed.**
+    # `Input` is a `ScrollView` and therefore a `ScrollableContainer`, which binds
+    # `down` to its own `scroll_down` with `show=False` — a real binding on a widget
+    # that cannot scroll vertically. `Screen.active_bindings` keys its map by key and
+    # keeps the first namespace to claim one, so the entry the footer would have shown
+    # was being displaced by a hidden binding that does nothing, and only a priority
+    # binding replaces an existing entry there. The action worked without this; the
+    # advertisement did not.
+    #
+    # Priority means this is consulted before the focused widget in every view, which
+    # is safe here for exactly one reason: `check_action` answers False unless the
+    # filter box has the keyboard, and a refused binding falls through to the rest of
+    # the chain — so `down` is still the message list's, the node list's and a detail
+    # pane's wherever those have the focus. Same shape as the log viewer's `tab`.
+    Binding("down", "step_into_nodes", "Node list", priority=True),
     # Reply, and shift-R rather than `r`, which has been refresh since Phase 3.
     # Renaming a verified binding to free up the letter would have cost more than
     # a shift key does, and a mistyped `r` refreshes, which is harmless.
@@ -341,6 +370,24 @@ class MeshConsoleApp(App):
     # it is the way out of a detail view, and a reader who has walked into one
     # from the node list has no other obvious way back.
     Binding("escape", "back", "Back"),
+    # Around the panels, in the order the reader asked for rather than the order
+    # they happen to be built in — see `focus_ring`.
+    #
+    # **`priority` because `Screen` already owns this key**: its own
+    # `Binding("tab", "app.focus_next")` sits between the focused widget and this
+    # class in the binding chain, so an ordinary binding here would never be
+    # consulted. Priority bindings are checked from the App down, which is what makes
+    # this one win — and is also why `focus_ring` had to join `MODAL_SHADOWED`: the
+    # log viewer binds `tab` to its level filter, at priority, and would otherwise
+    # have lost the key to this.
+    #
+    # `show=False` on both. The footer's left-hand run is six single keys of room and
+    # these are a key and a chord that do one thing between them; a reader who presses
+    # `tab` finds out what it does immediately and permanently.
+    Binding("tab", "focus_ring(1)", "Next panel", show=False, priority=True),
+    Binding(
+      "shift+tab", "focus_ring(-1)", "Previous panel", show=False, priority=True
+    ),
   ]
 
   # Which actions are reached by a key a text box would eat first — every letter
@@ -367,11 +414,40 @@ class MeshConsoleApp(App):
     "open_conversation",
   })
 
-  # And the set a *modal* takes the keyboard from, which is the same idea with two
+  # And the set a *modal* takes the keyboard from, which is the same idea with three
   # more members: `escape` has a job inside every modal so the app's `back` must
-  # not also fire, and ctrl+p opening a second menu over the first helps nobody.
-  # `ctrl+q` is deliberately absent, as above.
-  MODAL_SHADOWED = TEXT_BOX_SHADOWED | {"back", "menu"}
+  # not also fire, ctrl+p opening a second menu over the first helps nobody, and
+  # `tab` is the log viewer's level filter — a screen with one focusable list in it
+  # has no use for a ring around three panels it is covering. `ctrl+q` is deliberately
+  # absent, as above.
+  #
+  # `focus_ring` is in this set and deliberately *not* in `TEXT_BOX_SHADOWED`: `tab`
+  # is not a printable key, so neither Input eats it, and tab out of the filter box or
+  # the compose box is exactly how a reader gets back to a panel.
+  MODAL_SHADOWED = TEXT_BOX_SHADOWED | {"back", "menu", "focus_ring"}
+
+  # Which heading names the panel a widget belongs to, for the focus rule. The main
+  # pane's is the breadcrumb trail, which is the one label above it and already says
+  # which of the three panes is showing.
+  #
+  # The compose box is in here rather than left out, and the filter box points at the
+  # Nodes heading rather than at nothing: both are *inside* a panel, so the rule keeps
+  # naming the panel while the keyboard is in the box that belongs to it. Which of the
+  # two the keyboard is actually in is a question the boxes answer themselves — see
+  # `#node-filter:focus` and `#compose:focus`, both of which change their own fill.
+  PANEL_HEADINGS = {
+    "channels": "#channels-heading",
+    "nodes": "#nodes-heading",
+    "node-filter": "#nodes-heading",
+    "messages": "#breadcrumbs",
+    "dashboard-pane": "#breadcrumbs",
+    "detail-pane": "#breadcrumbs",
+    "compose": "#breadcrumbs",
+  }
+
+  # Every heading the rule can be drawn under, which is what makes clearing it one
+  # loop rather than a branch per panel.
+  PANEL_HEADING_SELECTORS = ("#channels-heading", "#nodes-heading", "#breadcrumbs")
 
 
   def __init__(self, connection: sqlite3.Connection) -> None:
@@ -767,7 +843,9 @@ class MeshConsoleApp(App):
 
     with Horizontal(id="body"):
       with Vertical(id="sidebar"):
-        yield Label("Channels", classes="panel-heading")
+        # Both headings carry an id, because both are looked up by one: they are
+        # where the focus rule is drawn. See `PANEL_HEADINGS`.
+        yield Label("Channels", id="channels-heading", classes="panel-heading")
         yield ListView(id="channels")
         yield Label("Nodes", id="nodes-heading", classes="panel-heading")
         # Between the heading and the list it filters, which is where RxOnly
@@ -816,6 +894,12 @@ class MeshConsoleApp(App):
       self.query_one("#messages", ListView), "scroll_y", self.messages_scrolled,
       init=False,
     )
+
+    # And the focus rule, on the one reactive every way of moving focus goes through.
+    # `init` is left alone here, unlike the two above: the initial value is a fact
+    # worth painting rather than a scroll that has not happened, and `AUTO_FOCUS` has
+    # put the keyboard in the channel list by the time this runs.
+    self.watch(self.screen, "focused", self.focus_moved)
 
     # Who this archive says the attached device is. Every message row is compared
     # against it to decide whether it is one of yours, and it is which end of a
@@ -1387,6 +1471,42 @@ class MeshConsoleApp(App):
 
 
 
+  def action_step_into_nodes(self) -> None:
+    """`down` in the filter box hands the keyboard to the list below it.
+
+    Jason's, and it closes the one gap the panel ring left: the filter is the last stop
+    in `focus_ring`, so reaching the results from it meant either tabbing all the way
+    round or `escape`, which reads as abandoning what you typed rather than acting on
+    it. The filter's whole job is to shorten that list, and this is the press that
+    arrives at the shortened version of it.
+
+    **It places a cursor as well as moving focus, and it has to.** `rebuild_nodes`
+    ends every rebuild with `index = None` — deliberately, so a list redrawn under a
+    reader does not claim a highlight nobody put there — which means a freshly filtered
+    list has no cursor at all, and focusing it alone would have shown nothing and cost
+    a second `down` to get a first row. So the first press lands on the first result,
+    which is the same bargain `MessageList._select_start` makes one pane over: take the
+    selection out of nothing, or move it if there already is one.
+
+    An existing cursor is left where it is, so a reader who walked into the list, came
+    back to the box and pressed `down` again returns to their place rather than to the
+    top. `escape` is unchanged and still goes to the list without touching its cursor —
+    the two keys now differ in exactly that, which is the difference between acting on
+    a filter and putting it down.
+    """
+    node_list = self.query_one("#nodes", ListView)
+    node_list.focus()
+
+    # `children` rather than the loaded count: an empty archive draws the "No nodes"
+    # placeholder as a row, and a cursor on it is what `tab` then `down` would have
+    # produced anyway. Nothing is selectable there — `on_list_view_selected` asks for a
+    # `NodeItem` — so the highlight is the whole of what happens.
+    if node_list.index is None and node_list.children:
+      node_list.index = 0
+
+
+
+
   def on_node_filter_changed(self, value: str) -> None:
     """Requery after the typing stops, rather than once per keystroke.
 
@@ -1672,6 +1792,130 @@ class MeshConsoleApp(App):
         and item.node_id == self.detail_node_id,
         "current",
       )
+
+
+
+
+  # ------------------------------------------------------------ which panel is live
+  #
+  # Three questions, and the sidebar's two marks above answer only two of them.
+  # `current` is which view is open and `-highlight` is where a list's arrow keys
+  # would go; this is which panel the arrow keys are talking to *at all*, which
+  # neither of those could say — the message pane deliberately has no selection until
+  # an arrow key asks for one, so a focused message pane had no mark of any kind.
+
+
+  def focus_moved(self, focused: Optional[Widget]) -> None:
+    """Draw the focus rule under the heading of whichever panel has the keyboard.
+
+    A watch on `Screen.focused` rather than a handler, for the same reason the two
+    scroll watchers in `on_mount` are watches: focus moves for `tab`, for a click, for
+    `c` and `f`, and for `escape` leaving a box — and every one of those goes through
+    this one reactive, where an event handler would have had to name each of them.
+
+    Nothing focused draws no rule anywhere, which is the honest answer and is also a
+    real resting position now rather than only a startup state: it is the first stop
+    in `focus_ring`.
+    """
+    heading = (
+      self.PANEL_HEADINGS.get(focused.id or "") if focused is not None else None
+    )
+
+    for selector in self.PANEL_HEADING_SELECTORS:
+      self.query_one(selector).set_class(selector == heading, "focused-panel")
+
+
+
+
+  def main_pane_id(self) -> Optional[str]:
+    """Which of #main's three panes is the one on screen, and whether tab visits it.
+
+    None means the ring skips the main pane in this view, which is the dashboard's
+    usual answer and Jason's: the sidebar is where a dashboard is navigated from, and
+    a stop that only ever passes the keyboard through is a stop worth not having.
+
+    **The rule is about rows, not about which view it is.** A pane with rows in it is
+    always worth focusing, because focusing it is how the cursor gets somewhere;
+    `#messages` is therefore never skipped, even on a channel short enough to fit. A
+    pane that can only be scrolled is worth focusing exactly when there is something
+    to scroll — so the dashboard and the two detail views are asked whether they
+    overflow, and a summary or a node that fits its pane is left out.
+
+    That is one rule for two answers rather than a special case for the dashboard, and
+    it closes the hole the special case would have left: node detail with a position
+    block runs past the bottom of a short terminal, and with the main pane out of the
+    ring on principle there would have been no keyboard route to the rest of it.
+    """
+    if self.viewing_messages or self.view == VIEW_DIRECT:
+      return "messages"
+
+    pane_id = "detail-pane" if self.viewing_detail else "dashboard-pane"
+    pane = self.query_one(f"#{pane_id}", VerticalScroll)
+
+    # `max_scroll_y` is what a scroll would be clamped to, so anything above zero is
+    # content the pane cannot show at once. Asked of the pane rather than tracked,
+    # because it changes with the terminal's height as well as with what is in it.
+    return pane_id if pane.max_scroll_y > 0 else None
+
+
+
+
+  def focus_ring(self) -> list[Optional[str]]:
+    """The panels `tab` visits, in order, for the view that is on screen.
+
+    Jason's order, which is not the order the widgets are built in and is the reason
+    this exists at all. Textual's own `tab` walks the DOM, and the DOM has the filter
+    box above the list it filters — so tabbing from the channels landed in a text box
+    on the way to the nodes, and the two lists a reader moves between were not
+    adjacent in the one sequence that moves between them. The filter is the last stop
+    here instead: it belongs to the node list, and you reach it after the thing it
+    acts on rather than in front of it.
+
+    **None is a stop, not the absence of one.** A ring with nowhere to rest cannot be
+    left, and a reader who has finished with the panels should be able to put the
+    keyboard down — with nothing focused, the single-letter bindings are unambiguous
+    and no list is quietly holding the arrow keys. It is first because that is where
+    the app starts.
+
+    The compose box is deliberately absent. It is reached by `c` and left by `escape`,
+    both of which say what they do, and a text box in a ring that is walked with `tab`
+    is a place a reader arrives by accident with a half-typed message in front of
+    them. Tabbing *out* of it still works — see `action_focus_ring`.
+    """
+    ring: list[Optional[str]] = [None, "#channels"]
+
+    main_pane = self.main_pane_id()
+    if main_pane is not None:
+      ring.append(f"#{main_pane}")
+
+    ring.append("#nodes")
+    ring.append("#node-filter")
+    return ring
+
+
+
+
+  def action_focus_ring(self, step: int) -> None:
+    """One step around `focus_ring`, forwards for `tab` and backwards for `shift+tab`.
+
+    Focus that the ring does not name is treated as the resting position, so `tab`
+    from the compose box goes to the channels and `shift+tab` to the filter. Refusing
+    to move would have been the other reading and is the worse one: `tab` is the key
+    for "somewhere else", and a box you are typing in is the place you are most likely
+    to want out of.
+    """
+    ring = self.focus_ring()
+
+    focused = self.focused
+    here = f"#{focused.id}" if focused is not None and focused.id else None
+    index = ring.index(here) if here in ring else 0
+
+    target = ring[(index + step) % len(ring)]
+    if target is None:
+      self.screen.set_focus(None)
+      return
+
+    self.query_one(target).focus()
 
 
 
@@ -3452,6 +3696,15 @@ class MeshConsoleApp(App):
 
     if action == "jump_newest":
       return True if self.can_jump_newest() else False
+
+    if action == "step_into_nodes":
+      # The one action gated on a text box *having* the keyboard rather than on it not
+      # having it, which is why it is absent from `TEXT_BOX_SHADOWED` — the guard above
+      # would have taken away the only key this exists to provide. Absent from
+      # `MODAL_SHADOWED` for a reason that needs no set: with a modal up, `self.focused`
+      # is that screen's, so the test below already answers no.
+      focused = self.focused
+      return True if (focused is not None and focused.id == "node-filter") else False
 
     if action == "compose":
       return True if self.compose_available() else False

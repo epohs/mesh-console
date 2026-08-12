@@ -603,8 +603,31 @@ class MessageList(ListView):
 
   **It also allows the pane to be scrolled a few lines past its last message**,
   which is `OVERSCROLL_LINES` below.
+
+  **And it takes a click as a click on the pane before it is a click on a row**,
+  which is `FOCUS_ON_CLICK` and the two handlers under it.
   """
 
+
+  # Textual focuses the nearest focusable widget on mouse-down, in
+  # `Screen._forward_event`, before the click is forwarded anywhere at all. That is
+  # what made a click in this pane a click on a *message*: by the time
+  # `_on_list_item__child_clicked` ran, the list was already focused, so there was
+  # nothing left to distinguish a click that came to put the keyboard here from one
+  # that came to open a row — and `ListView`'s own handler treats every click as the
+  # second kind. A reader who clicked the pane to be able to arrow through it was
+  # shown a message's detail view instead, which is Jason's, and the reason reaching
+  # this pane by mouse was worse than not reaching it.
+  #
+  # Declining the framework's focus is what puts the distinction back within reach:
+  # nothing focuses this list except the handlers below, so `has_focus` there means
+  # "was focused before this click" and can be branched on.
+  #
+  # The cost is that the framework no longer focuses this pane when a click lands on
+  # a part of it that is not a row — the blank lines under a short channel, and
+  # `OVERSCROLL_LINES` under a long one. `on_click` below is that case, put back by
+  # hand, and it is the whole of what this class has to make up for.
+  FOCUS_ON_CLICK = False
 
   start_row: int = 0
 
@@ -683,6 +706,70 @@ class MessageList(ListView):
     if self._select_start():
       return
     super().action_cursor_up()
+
+
+  def _on_list_item__child_clicked(self, event: ListItem._ChildClicked) -> None:
+    """The first click takes the keyboard and the cursor; the second opens the row.
+
+    **Two clicks rather than one, and only for this pane.** `#channels` and `#nodes`
+    keep opening what you click on the first press, which is what a sidebar is for —
+    the click *is* the navigation there, and there is nothing else it could have
+    meant. Here the same press meant two different things depending on where the
+    keyboard already was, and the reader had no way to ask for the one they wanted.
+
+    So the first click on an unfocused pane focuses it and puts the cursor on the row
+    that was pressed, and stops. That is more than focus and deliberately so: the
+    reader has just pointed at a message, so the arrow keys should start from there
+    rather than from `start_row` — clicking a row and then pressing `down` walks from
+    the row, which is the whole of what was being asked for.
+
+    A click on an already-focused pane is the framework's own path, unchanged, and is
+    how a message's detail view is still reached with a mouse.
+
+    Overriding a private handler is not free and is the only place the distinction
+    exists: `ListItem._ChildClicked` is what a clicked row posts and
+    `ListView.Selected` — which the app acts on — is posted from here, so a guard
+    anywhere downstream would be reading a message that no longer knows it came from
+    a mouse. `FOCUS_ON_CLICK` above is the other half; neither works alone.
+
+    **`prevent_default` rather than declining to call `super`, and that is not a
+    style choice.** Textual does not dispatch a message handler the way Python calls
+    a method: `MessagePump._get_dispatch_methods` walks the whole MRO and invokes
+    *every* class that defines the name, so this method does not replace
+    `ListView`'s — it runs before it, and `ListView`'s runs next whatever this one
+    does. Written with a `super()` call in the pass-through branch and nothing in the
+    other, the effect was the exact opposite of what it reads as: the first click
+    opened a row anyway, and the second posted `Selected` three times.
+    `_get_dispatch_methods` breaks its walk on `message._no_default_action`, which is
+    what `prevent_default` sets, so that is the one thing that stops the base
+    handler — and the pass-through branch must therefore call nothing at all.
+    """
+    if self.has_focus:
+      # `ListView`'s own handler is next off the MRO walk and does the whole of it.
+      return
+
+    # `stop` keeps this from bubbling on to the app, which is what the base handler
+    # would have done; `prevent_default` is what keeps the base handler from running.
+    event.stop()
+    event.prevent_default()
+
+    # `focus()` is deferred — it goes through `call_later` — so `has_focus` above is
+    # still false for the rest of this click and true by the next one, which is
+    # exactly the granularity the branch is asking about.
+    self.focus()
+    self.index = self.children.index(event.item)
+
+
+  def on_click(self, event: events.Click) -> None:
+    """Focus the pane when the click landed on it rather than on one of its rows.
+
+    `event.widget` is the widget under the pointer, which for a row is the row or
+    something inside it and is never this list — so this fires exactly in the case
+    `FOCUS_ON_CLICK = False` gave away and never competes with the handler above for
+    a click on a message. Nothing is selected, because nothing was pointed at.
+    """
+    if event.widget is self and not self.has_focus:
+      self.focus()
 
 
 

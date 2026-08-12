@@ -669,19 +669,22 @@ MessageItem {
  * it exactly that way — arrows plainly moving something, nothing on screen saying
  * what.
  *
- * `$rx-link` is 8.33:1 focused and 2.78:1 unfocused in the dark palette, and it is
- * the colour this interface already gives the same job: `primary` is `$rx-link`, and
- * `$block-cursor-background` is what the two sidebar lists paint their cursor with. So
- * all three lists now mark the row the arrow keys are on in one colour, which they did
- * not before, and the message pane stops being the one list whose cursor was a
- * different idea.
+ * It was `$rx-link` for one commit — 8.33:1, the colour `primary` and therefore the
+ * sidebar's own row cursor derive from — and is `$rx-text-primary`, **the colour of the
+ * message text itself**, at Jason's pick between those two. 4.79:1 in the dark palette
+ * and 3.36:1 in the light one, which is the trade: a third less contrast than
+ * `$rx-link` in the dark, half again more in the light, where `$rx-link` is one fixed
+ * value that never inverted and only ever managed 2.19:1. A mark in the text's own
+ * colour also reads as belonging to the message rather than to the framework.
  *
- * Both strengths are kept rather than collapsed into one. The focus rule under the
- * breadcrumbs now answers "does this pane have the keyboard", so the two edge weights
- * are no longer the only thing carrying it — but a full-strength edge left behind in
- * an unfocused pane would compete with the sidebar's own cursor for "where will the
- * arrows go", and the fainter one is the answer to that. 2.78:1 is a real mark; 1.13
- * was not.
+ * **One strength, where `$rx-link` had two, and the hue is what forced it.** 50% of
+ * this colour over the page is 1.97:1 — within touching distance of the 1.13 that
+ * started all this — so a fainter unfocused variant could not be had in blue without
+ * reintroducing the fault. It is not needed either: the focus rule under the
+ * breadcrumbs answers "does this pane have the keyboard" on its own now, which is the
+ * job the two weights were sharing. What is left for this edge is the one question it
+ * was always best at — which row the arrow keys are on — and that answer does not
+ * change when the reader looks somewhere else.
  *
  * Two strengths, blurred and focused, which is the distinction the sidebar lists
  * make with `$block-cursor-background` against its tint. It matters more here than
@@ -702,14 +705,14 @@ MessageItem {
  */
 
 #messages > MessageItem.-highlight {
-  border-left: thick $rx-link 50%;
+  border-left: thick $rx-text-primary;
   background: transparent;
   color: $rx-text-primary;
   text-style: none;
 }
 
 #messages:focus > MessageItem.-highlight {
-  border-left: thick $rx-link;
+  border-left: thick $rx-text-primary;
   background: transparent;
   color: $rx-text-primary;
   text-style: none;
@@ -890,11 +893,11 @@ MessageHeader > .message-header--node-outbound {
 }
 
 #messages.direct > MessageItem.unread.-highlight {
-  border-left: thick $rx-link 50%;
+  border-left: thick $rx-text-primary;
 }
 
 #messages.direct:focus > MessageItem.unread.-highlight {
-  border-left: thick $rx-link;
+  border-left: thick $rx-text-primary;
 }
 
 

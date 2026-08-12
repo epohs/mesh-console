@@ -349,6 +349,33 @@ class MeshConsoleApp(App):
     # the chain — so `down` is still the message list's, the node list's and a detail
     # pane's wherever those have the focus. Same shape as the log viewer's `tab`.
     Binding("down", "step_into_nodes", "Node list", priority=True),
+    # Out of the compose box and back into what it posts into, which is the other half
+    # of `tab` reaching the box at all. Without these the box is a place the arrow keys
+    # do nothing and `escape`/`shift+tab` are the only ways out — reachable in one
+    # keypress and leavable only by knowing which of two other keys to reach for.
+    #
+    # **The two keys land in two places, and that is the point.** `up` goes to the
+    # message the reader has read to, which is behind them; `down` goes to the first one
+    # they have not, which is ahead. So the pair reads as "back to what I have seen" and
+    # "on to what I have not" rather than as two ways to leave a box.
+    #
+    # On a detail page both simply hand the keyboard to the pane, because there is no
+    # list to land in and a long message still has to be scrollable from here — see
+    # `leave_compose_for_panel`. Same `priority` and the same reason as `down` above:
+    # `Input` is a `ScrollableContainer` and binds both to its own scrolling.
+    Binding("up", "compose_to_read", "Last read", priority=True),
+    Binding("down", "compose_to_unread", "First unread", priority=True),
+    # Sideways between the sidebar and the pane it opens, which is Jason's and is the
+    # shape a tree control has: `right` steps into what the cursor names, `left` steps
+    # back out to the list that named it. `enter` and `shift+tab` already do both and
+    # keep doing them; this is the pair that needs no reaching.
+    #
+    # Gated hard on which panel has the keyboard, because both keys belong to a text
+    # box the moment one has it — `left` in the compose box moves through what you have
+    # typed, and a priority binding that took it would be a genuine fault rather than a
+    # missing feature. `check_action` is what keeps that from happening.
+    Binding("right", "open_highlighted_channel", "Open", show=False, priority=True),
+    Binding("left", "leave_for_channels", "Channels", show=False, priority=True),
     # Reply, and shift-R rather than `r`, which has been refresh since Phase 3.
     # Renaming a verified binding to free up the letter would have cost more than
     # a shift key does, and a mistyped `r` refreshes, which is harmless.
@@ -424,7 +451,15 @@ class MeshConsoleApp(App):
   # `focus_ring` is in this set and deliberately *not* in `TEXT_BOX_SHADOWED`: `tab`
   # is not a printable key, so neither Input eats it, and tab out of the filter box or
   # the compose box is exactly how a reader gets back to a panel.
-  MODAL_SHADOWED = TEXT_BOX_SHADOWED | {"back", "menu", "focus_ring"}
+  # The four arrow bindings join it too. Each is gated on which panel has the keyboard,
+  # and while a modal is up `self.focused` is that screen's — so those gates already
+  # answer no and this set is belt to their braces. It is here so that adding a fifth
+  # arrow binding gated some other way cannot quietly reach across a dialog.
+  MODAL_SHADOWED = TEXT_BOX_SHADOWED | {
+    "back", "menu", "focus_ring",
+    "step_into_nodes", "compose_to_read", "compose_to_unread",
+    "open_highlighted_channel", "leave_for_channels",
+  }
 
   # Which heading names the panel a widget belongs to, for the focus rule. The main
   # pane's is the breadcrumb trail, which is the one label above it and already says
@@ -1507,6 +1542,95 @@ class MeshConsoleApp(App):
 
 
 
+  def action_compose_to_read(self) -> None:
+    """`up` in the compose box: back to the message the reader has read to."""
+    self.leave_compose_for_panel(unread=False)
+
+
+
+
+  def action_compose_to_unread(self) -> None:
+    """`down` in the compose box: on to the first message they have not read."""
+    self.leave_compose_for_panel(unread=True)
+
+
+
+
+  def leave_compose_for_panel(self, *, unread: bool) -> None:
+    """Hand the keyboard from the box to the panel it posts into, on a named row.
+
+    **Where "read to" comes from, and why it is not measured again here.** `read_row` is
+    the app's one answer to how far this reader has got — `mark_read_from_viewport` sets
+    it from the read line, a fifth of the pane up from the bottom, so it already means
+    "the lowest message that has genuinely been past the reader's eye". Asking the
+    viewport a second time with slightly different arithmetic would be a second answer
+    to one question, and the two would drift. It is also exactly where the *first* arrow
+    key lands when the pane is reached any other way — `MessageList.start_row`, set by
+    `set_read_row` — so arriving from the box lands where arriving from `tab` lands, and
+    the box is not a special case with its own idea of where the reader was.
+
+    The unread landing is the row after it, which is the honest local meaning of "the
+    first one not read": rows are in archive order, so the message after the last one
+    read is the next one to read. Clamped, so a fully-read channel keeps the cursor on
+    its final message rather than off the end — there being nothing unread is a real
+    answer and the last message is where the reader already is.
+
+    **Moving this cursor does not itself mark anything read**, and that is deliberate
+    and unchanged — reading is the scroll position (`mark_read_from_viewport`), not the
+    highlight. In practice the two agree here: landing on an unread row below the fold
+    scrolls the pane to show it, and that scroll is what marks what it carried past the
+    read line. A row already on screen is not claimed, which is right — it was visible,
+    not necessarily read.
+
+    A detail pane gets the keyboard and nothing else. There is no list to land in, and
+    a message long enough to outrun its pane still has to be scrollable from a box that
+    now takes the focus on the way in — see `enter_detail`.
+    """
+    if self.viewing_detail:
+      self.query_one("#detail-pane", VerticalScroll).focus()
+      return
+
+    messages = self.query_one("#messages", MessageList)
+    messages.focus()
+
+    if not messages.children:
+      return
+
+    last = len(messages.children) - 1
+    target = self.read_row + 1 if unread else self.read_row
+    messages.index = max(0, min(target, last))
+
+
+
+
+  def action_open_highlighted_channel(self) -> None:
+    """`right` on a channel opens it, which is what `enter` on it does.
+
+    Reached through the list's own `action_select_cursor` rather than by calling
+    `open_channel` here, so there is one route into a channel and not two: that action
+    posts `ListView.Selected`, which `on_list_view_selected` already turns into the
+    right one of `open_channel` and `open_direct_index` depending on the row. A second
+    caller would have had to know that difference, and would have been the copy that
+    fell behind the next time the sidebar grew a kind of row.
+    """
+    self.query_one("#channels", ListView).action_select_cursor()
+
+
+
+
+  def action_leave_for_channels(self) -> None:
+    """`left` in the message pane goes back to the list that opened it.
+
+    The cursor is left exactly where it is, in both lists. `left` is a statement about
+    where the keyboard should be and not about what the reader has finished with — the
+    message they were on is still where they were, and `right` or `enter` on the channel
+    brings them back to it.
+    """
+    self.query_one("#channels", ListView).focus()
+
+
+
+
   def on_node_filter_changed(self, value: str) -> None:
     """Requery after the typing stops, rather than once per keystroke.
 
@@ -2292,7 +2416,22 @@ class MeshConsoleApp(App):
     self.set_breadcrumbs(*trail)
     self.set_message_status(None)
     self.query_one("#detail", Static).update(body)
-    self.query_one("#detail-pane", VerticalScroll).focus()
+
+    # **A message's detail opens in its reply box; a node's opens in the pane.** Jason's,
+    # and it follows from what the two pages are for: this one arms a reply on the way in
+    # and the reply *is* the page — see the note in `show_message_detail` — so the box is
+    # what the reader came here to use, and landing anywhere else costs a keypress to
+    # correct. A node has nothing to type into and its pane is the whole of it.
+    #
+    # After `show_view`, which is load-bearing: `update_compose()` runs inside it and is
+    # what gives the box its `available` class, and Textual refuses focus to a widget
+    # that is still `display: none`. Asked rather than assumed, because a read-only
+    # console reaches this line with no box to focus and must land on the pane.
+    if view == VIEW_MESSAGE and self.compose_available():
+      self.query_one("#compose", Input).focus()
+    else:
+      self.query_one("#detail-pane", VerticalScroll).focus()
+
     self.sub_title = crumb
 
 
@@ -3718,6 +3857,37 @@ class MeshConsoleApp(App):
     if action == "jump_newest":
       return True if self.can_jump_newest() else False
 
+    # The four keys below are `priority` bindings, which means this class is asked about
+    # them *before* the focused widget is. That is the only way to have them at all —
+    # a `ListView` and an `Input` both bind all four to their own scrolling — and it is
+    # also why each gate has to be exact: a False here falls through to whatever the
+    # focused widget wanted the key for, and a True takes it away. `left` and `right`
+    # inside the compose box are the case that matters most, since those move through
+    # text a reader has typed.
+    if action in ("compose_to_read", "compose_to_unread"):
+      # Only from the box, and only where there is a panel above it to go to. The flat
+      # direct message index has no box, so it never reaches this.
+      focused = self.focused
+      if focused is None or focused.id != "compose":
+        return False
+      return True if (self.viewing_messages or self.viewing_detail) else False
+
+    if action == "open_highlighted_channel":
+      # `right` belongs to the channel list and to nothing else. A row has to be under
+      # the cursor for there to be anything to open — an empty list or a list the reader
+      # has not put a cursor in yet answers no.
+      focused = self.focused
+      if focused is None or focused.id != "channels":
+        return False
+      return True if self.query_one("#channels", ListView).index is not None else False
+
+    if action == "leave_for_channels":
+      # `left` belongs to the message pane. Deliberately not offered from the node list:
+      # the nodes are not something the channels opened, so there is nothing to step
+      # back out to, and `tab` is the way between the two sidebar panels.
+      focused = self.focused
+      return True if (focused is not None and focused.id == "messages") else False
+
     if action == "step_into_nodes":
       # The one action gated on a text box *having* the keyboard rather than on it not
       # having it, which is why it is absent from `TEXT_BOX_SHADOWED` — the guard above
@@ -3911,11 +4081,23 @@ class MeshConsoleApp(App):
       # as stopping answering.** A message's detail arms its own reply and the reply
       # is the point of the page; cancelling it would leave a plain compose box on a
       # page whose entire subject is the thing it had been answering, and cost a
-      # second escape to get out of. So the two steps here are the two the message
-      # list already has — out of the box, then out of the view — and the reply
-      # leaves with the view. The text survives the first step, as it does in a
-      # channel: escape means "stop typing in this box", not "discard that".
-      if focused_id == "compose":
+      # second escape to get out of. So the reply leaves with the view rather than
+      # ahead of it.
+      #
+      # **Whether there is a step out of the box first now depends on whether anything
+      # has been typed, and that is because the box is focused on arrival.** It used to
+      # be two steps unconditionally — out of the box, then out of the view, matching
+      # the message list — and the argument for that was that entering the box had been
+      # a deliberate act (`c` or `R`) which escape should undo one layer at a time.
+      # `enter_detail` puts the keyboard in the box for this view now, so on an empty
+      # box the first escape would undo something the reader never chose and leaving a
+      # message would cost two presses where it cost one. A test caught exactly that.
+      #
+      # Typed text still earns the step. `escape` means "stop typing in this box" and
+      # never "discard that" anywhere else in this interface, and a draft is the one
+      # thing here worth protecting from a single keypress — so a box with something in
+      # it keeps the two steps, and the reader can see why: the text is still on screen.
+      if focused_id == "compose" and self.query_one("#compose", Input).value:
         self.query_one("#detail-pane", VerticalScroll).focus()
         return
 

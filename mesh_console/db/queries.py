@@ -55,14 +55,20 @@ _CHANNEL_EXTRA = "m.channel_index, m.to_node, m.hop_count"
 _DM_EXTRA = "NULL AS channel_index, m.to_node, NULL AS hop_count"
 
 # The six telemetry columns after altitude arrived in schema 0.8.0, and
-# selecting them here is why this reader's floor is 0.8.0 rather than 0.7.0.
+# selecting them here is why this reader's floor was 0.8.0 rather than 0.7.0.
 # They are latest-value, not a series: each is the most recent reading of its
 # kind, and NULL for a node that has never sent that telemetry arm. Every one
 # of the four node queries below reads this list, so the whole reader gained
 # them at once.
+#
+# `hops_away` is 0.9.0's and costs this reader nothing to add, because the floor
+# already sits at 0.10.0 for `emoji` — the column is older than the oldest
+# archive this code will open. Read it with IS NULL and never with falsiness:
+# 0 hops is a direct neighbour, which is the loudest reading in the column, and
+# the field renderer in ui/format.py honours that distinction.
 _NODE_COLUMNS = """
   node_id, short_name, long_name, hardware, role,
-  first_seen, last_seen, battery_level, voltage,
+  first_seen, last_seen, hops_away, battery_level, voltage,
   snr, rssi, latitude, longitude, altitude,
   temperature, humidity, pressure,
   channel_util, air_util_tx, uptime_seconds

@@ -361,6 +361,14 @@ def format_node_detail(
     ("Role", node.get("role")),
     ("First Seen", format_timestamp(node.get("first_seen"))),
     ("Last Seen", format_timestamp(node.get("last_seen"))),
+    # Between Last Seen and Battery because that is where RxOnly puts it, and the
+    # two panels are the same block in two mediums. Bare integer, no unit — RxOnly's
+    # field map gives it no `format` either, and "3" reads as hops in a row labelled
+    # Hops Away. A node the mesh has never told us a hop count for drops the line,
+    # like every other absent field; a *zero* is a direct neighbour, which is the
+    # loudest thing this column says, and `_append_fields` keeps it because it tests
+    # None and "" rather than falsiness.
+    ("Hops Away", node.get("hops_away")),
     ("Battery", _with_unit(node.get("battery_level"), "%")),
     ("Voltage", _with_unit(node.get("voltage"), "V")),
     ("SNR", node.get("snr")),

@@ -178,6 +178,16 @@ Screen {
  * Deliberately not `$rx-accent-node`: gold means "this is where the typing goes" on
  * `#compose:focus` and `#node-filter:focus`, and a panel is not a text box.
  *
+ * **At half strength, which is Jason's and was a full-strength `$rx-link` first.** A
+ * `solid` bottom border is already the lightest glyph a terminal has for a horizontal
+ * line — `─`, one cell tall — so there is no thinner line to draw and the only way to
+ * make it quieter is to take contrast out of it. `50%` is the same percentage the
+ * message list spends on the same question one pane over: `MessageItem.-highlight`
+ * takes `$rx-bg-below-surface 50%` unfocused and the full value focused, so half of a
+ * palette colour already means "this mark, more quietly" in this stylesheet. The rule
+ * reads as an underline the eye finds when it looks for it rather than a line that
+ * announces itself across a 34-column sidebar.
+ *
  * The main pane's heading is `#breadcrumbs`, which is the one label above it and
  * already the thing that says which of the three panes is showing. It gets the same
  * reserved row for the same reason — see the note there.
@@ -186,7 +196,7 @@ Screen {
 .panel-heading.focused-panel,
 #breadcrumbs.focused-panel {
   margin: 0;
-  border-bottom: solid $rx-link;
+  border-bottom: solid $rx-link 50%;
 }
 
 /* And the Nodes heading again, because it is the one with a margin above it to keep:
@@ -196,7 +206,7 @@ Screen {
 
 #nodes-heading.focused-panel {
   margin: 1 0 0 0;
-  border-bottom: solid $rx-link;
+  border-bottom: solid $rx-link 50%;
 }
 
 /* Capped where RxOnly caps it: `max-height: calc(5 * 2.25rem)` on
@@ -649,11 +659,29 @@ MessageItem {
  * viewport has already carried past its read line, and from there it moves the way
  * a cursor moves. `escape` out of the channel takes it away again.
  *
- * The colour is the band's, which is what this was before: `$rx-bg-below-surface`,
- * the one entry in this palette a deliberately equal step from the page in both
- * themes. As a *line* it has far less area than it had as a fill, so it is a
- * quieter mark than the band was — deliberately, and one value here if it turns
- * out to be too quiet.
+ * **The colour was `$rx-bg-below-surface` and is `$rx-link`, and that is the one
+ * value the note below always said this might come down to.** It was the band's
+ * colour, kept when the band became a line on the reasoning that a line has far less
+ * area than a fill and should therefore be quieter. The arithmetic says it went past
+ * quiet: `$rx-bg-below-surface` is 1.38:1 against the page at full strength and
+ * **1.13:1 at the 50% the unfocused state takes**, so the mark a reader is meant to
+ * navigate by was invisible in both states and worst in the commoner one. Jason found
+ * it exactly that way — arrows plainly moving something, nothing on screen saying
+ * what.
+ *
+ * `$rx-link` is 8.33:1 focused and 2.78:1 unfocused in the dark palette, and it is
+ * the colour this interface already gives the same job: `primary` is `$rx-link`, and
+ * `$block-cursor-background` is what the two sidebar lists paint their cursor with. So
+ * all three lists now mark the row the arrow keys are on in one colour, which they did
+ * not before, and the message pane stops being the one list whose cursor was a
+ * different idea.
+ *
+ * Both strengths are kept rather than collapsed into one. The focus rule under the
+ * breadcrumbs now answers "does this pane have the keyboard", so the two edge weights
+ * are no longer the only thing carrying it — but a full-strength edge left behind in
+ * an unfocused pane would compete with the sidebar's own cursor for "where will the
+ * arrows go", and the fainter one is the answer to that. 2.78:1 is a real mark; 1.13
+ * was not.
  *
  * Two strengths, blurred and focused, which is the distinction the sidebar lists
  * make with `$block-cursor-background` against its tint. It matters more here than
@@ -674,14 +702,14 @@ MessageItem {
  */
 
 #messages > MessageItem.-highlight {
-  border-left: thick $rx-bg-below-surface 50%;
+  border-left: thick $rx-link 50%;
   background: transparent;
   color: $rx-text-primary;
   text-style: none;
 }
 
 #messages:focus > MessageItem.-highlight {
-  border-left: thick $rx-bg-below-surface;
+  border-left: thick $rx-link;
   background: transparent;
   color: $rx-text-primary;
   text-style: none;
@@ -862,11 +890,11 @@ MessageHeader > .message-header--node-outbound {
 }
 
 #messages.direct > MessageItem.unread.-highlight {
-  border-left: thick $rx-bg-below-surface 50%;
+  border-left: thick $rx-link 50%;
 }
 
 #messages.direct:focus > MessageItem.unread.-highlight {
-  border-left: thick $rx-bg-below-surface;
+  border-left: thick $rx-link;
 }
 
 

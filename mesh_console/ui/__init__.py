@@ -1877,16 +1877,32 @@ class MeshConsoleApp(App):
     and no list is quietly holding the arrow keys. It is first because that is where
     the app starts.
 
-    The compose box is deliberately absent. It is reached by `c` and left by `escape`,
-    both of which say what they do, and a text box in a ring that is walked with `tab`
-    is a place a reader arrives by accident with a half-typed message in front of
-    them. Tabbing *out* of it still works — see `action_focus_ring`.
+    **The compose box follows the pane it belongs to, and it was left out first.** The
+    argument for leaving it out was that `c` reaches it and `escape` leaves it, both
+    saying what they do, and that a text box in a ring walked with `tab` is somewhere a
+    reader arrives by accident with a half-typed message in front of them. Jason's
+    call to put it in, and the reading that wins is the reader's: having tabbed to a
+    channel's messages or to one message's detail, the next thing wanted is usually to
+    answer it, and `tab` is the key already in hand. It sits immediately after the main
+    pane rather than at the end, so the panel and the box that posts into it are
+    adjacent — which is also why it is not simply appended: reaching the reply for the
+    thing you are reading should not mean walking past the node list.
+
+    Only when there is somewhere to send. `compose_available` is the same question the
+    box's own visibility asks, so this never offers a stop that is `display: none` —
+    which would be a `tab` that appears to do nothing, since Textual refuses focus to
+    an invisible widget and the ring would have handed it the keyboard anyway.
     """
     ring: list[Optional[str]] = [None, "#channels"]
 
     main_pane = self.main_pane_id()
     if main_pane is not None:
       ring.append(f"#{main_pane}")
+
+    # Straight after the pane, and gated on the same answer that decides whether the
+    # box is on screen at all — a read-only console never grows this stop.
+    if self.compose_available():
+      ring.append("#compose")
 
     ring.append("#nodes")
     ring.append("#node-filter")
@@ -1898,11 +1914,16 @@ class MeshConsoleApp(App):
   def action_focus_ring(self, step: int) -> None:
     """One step around `focus_ring`, forwards for `tab` and backwards for `shift+tab`.
 
-    Focus that the ring does not name is treated as the resting position, so `tab`
-    from the compose box goes to the channels and `shift+tab` to the filter. Refusing
-    to move would have been the other reading and is the worse one: `tab` is the key
-    for "somewhere else", and a box you are typing in is the place you are most likely
-    to want out of.
+    Focus that the ring does not name is treated as the resting position, so `tab` from
+    it goes to the channels and `shift+tab` to the filter. Refusing to move would have
+    been the other reading and is the worse one: `tab` is the key for "somewhere else",
+    and the place a reader is most likely to want out of is a box they are typing in.
+
+    That fallback covers less than it used to now the compose box is a stop of its own,
+    and it is not dead: a box that was available when it took the keyboard and is not
+    when `tab` is pressed — a channel that stopped being sendable, a collector that
+    stopped answering — is focus the ring no longer names, and this is what gets the
+    reader out of it.
     """
     ring = self.focus_ring()
 

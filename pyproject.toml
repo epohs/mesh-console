@@ -1,6 +1,10 @@
 [project]
 name = "mesh-console"
-version = "0.1.0"
+# Kept in step with mesh_console/__init__.py, which is the source of truth and the
+# only copy the program can read: there is no build backend here and the project is
+# not installed, so importlib.metadata cannot see this field and neither can the
+# interface. This one is for anyone reading the file.
+version = "1.0.0"
 description = "A terminal interface for reading a Meshtastic archive over SSH."
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }

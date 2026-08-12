@@ -507,6 +507,53 @@ def _with_unit(value: Any, unit: str, places: Optional[int] = None) -> Optional[
 
 
 
+def format_age(unix_timestamp: Optional[int], now: Optional[int] = None) -> str:
+  """How long ago that was, coarsely: `4s ago`, `12m ago`, `3h ago`, `2d ago`.
+
+  For the menu's "Updated", where the reader is asking one yes-or-no question —
+  is anything still arriving? — and `1d 4h 12m ago` answers it no better than
+  `1d ago` while taking three times the room. So this is the coarsest unit that
+  fits and nothing below it, which is the opposite of `format_uptime`'s choice
+  and correct for the opposite reason: an uptime is a quantity someone reads, an
+  age is a quantity someone glances at.
+
+  `now` is a parameter so this can be tested without waiting, and defaults to the
+  clock. Both sides are unix seconds in the archive's own terms.
+
+  **A clock that disagrees with the collector's reads as the future**, which is not
+  hypothetical between a laptop and a Pi: a timestamp ahead of `now` gives a
+  negative age, and `-3s ago` would look like a bug in this console rather than
+  like the clock skew it is. Such an age is reported as `just now` — the only
+  honest reading of "newer than I think the present is" that does not accuse
+  anybody of anything.
+
+  An archive with no messages at all returns `never`, which is a real state on a
+  console opened against a collector that has just started.
+  """
+  if unix_timestamp is None:
+    return "never"
+
+  try:
+    then = int(unix_timestamp)
+  except (TypeError, ValueError):
+    return "never"
+
+  current = int(datetime.now().timestamp()) if now is None else int(now)
+  elapsed = current - then
+
+  if elapsed < 0:
+    return "just now"
+  if elapsed < 60:
+    return f"{elapsed}s ago"
+  if elapsed < 3600:
+    return f"{elapsed // 60}m ago"
+  if elapsed < 86400:
+    return f"{elapsed // 3600}h ago"
+  return f"{elapsed // 86400}d ago"
+
+
+
+
 def format_uptime(seconds: Any) -> Optional[str]:
   """`90061` becomes `1d 1h 1m`, and nothing stays nothing.
 

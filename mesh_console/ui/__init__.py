@@ -21,6 +21,7 @@ from __future__ import annotations
 import sqlite3
 import webbrowser
 
+from pathlib import Path
 from time import monotonic
 from typing import Any, Optional
 
@@ -34,8 +35,9 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
-from mesh_console import db
+from mesh_console import __version__, db
 from mesh_console.db import (
+  REQUIRED_SCHEMA,
   ArchiveUnavailable,
   SchemaVersionMismatch,
   get_meta_bool,
@@ -49,6 +51,7 @@ from mesh_console.state import (
   ReadPositions,
 )
 from mesh_console.ui.format import (
+  format_age,
   format_channel_label,
   format_coordinates,
   format_device_name,
@@ -210,6 +213,25 @@ VIEW_MESSAGE = "message"
 # a breadcrumb naming a sidebar entry that reads differently is worse than no
 # breadcrumb.
 DIRECT_MESSAGES_LABEL = "Direct Messages"
+
+
+# What the menu says about sending, in one word each. **Four states and not three,
+# because the fourth is the common one:** a console configured correctly whose
+# collector is simply not running right now is not misconfigured, and saying so
+# would send a reader hunting for a settings mistake that does not exist. That
+# happens on every collector restart.
+#
+# Set in `assess_sending` and `on_probe_finished`, beside the gates they describe,
+# rather than worked out again from the same flags somewhere else — a second reading
+# of the same conditions is a second thing to keep in step. `send_unavailable_reason`
+# stays what it was: a sentence for a notification, too long for a menu row and too
+# specific to be a status.
+SEND_DISABLED = "disabled"          # ENABLE_SEND is off. Nothing is wrong.
+SEND_MISCONFIGURED = "misconfigured"  # Asked for, and contradicted by the install
+                                      # or by what the archive says the writer offers.
+SEND_UNAVAILABLE = "unavailable"    # Set up correctly; nothing answered the socket.
+SEND_CHECKING = "checking"          # The probe is in flight. See `probe_collector`.
+SEND_ENABLED = "enabled"            # A collector answered.
 
 
 # Where a clicked breadcrumb goes. Tags rather than callables, because they travel
@@ -570,6 +592,9 @@ class MeshConsoleApp(App):
     self.send_configured: bool = bool(Config.get("ENABLE_SEND", False))
     self.send_available: bool = False
     self.send_unavailable_reason: Optional[str] = None
+    # One word for the menu, from the same gates. Starts at the truth for a console
+    # that has not asked yet: `assess_sending` runs at mount and settles it.
+    self.send_state: str = SEND_DISABLED
     self.sender: Optional[Any] = None
     self.send_in_flight: bool = False
 
@@ -2407,6 +2432,11 @@ class MeshConsoleApp(App):
       self.set_message_status("Could not read the archive.")
       # No box over an unreadable channel: a message sent here would be archived
       # into something this console has just failed to read.
+      #
+      # `send_state` is deliberately left alone. This is one view vetoing its own
+      # box, not a change in whether sending is set up — the menu's Sending line
+      # describes the arrangement between this console and its collector, and a
+      # channel that would not load says nothing about either.
       self.send_available = False
       self.update_compose()
       self.refresh_bindings()
@@ -3022,24 +3052,66 @@ class MeshConsoleApp(App):
     The entries are built at open so the theme row can say which way it will
     switch, and the screen reports a key back rather than acting itself — the
     dispatch stays here, where the actions live.
+
+    The header above them is built here for the same reason and one more: three of
+    its four facts are archive reads, and an archive read that fails has to leave
+    the menu openable. `self.read` returns None on a dropped connection, and every
+    line below has something true to say about None.
     """
     dark = self.theme == RXONLY_DARK.name
     self.push_screen(
-      MenuScreen((
-        # **Not "raw", which it usually is not.** The collector tidies its own
-        # output before writing it — dropping heartbeats, joining records,
-        # decoding payloads — and "raw" promised the opposite of what arrives.
-        # It cannot say "tidy" either: `TIDY_LOGS` is the collector's setting,
-        # this process cannot read it, and `LOG_COMMAND` can be pointed at any
-        # command on any host, so what this pane shows need not come from the
-        # collector whose archive is open. Naming the source is the one claim
-        # that is true in every arrangement. Jason's, 2026-08-07.
-        ("logs", "View collector log"),
-        ("refresh", "Refresh"),
-        ("theme", "Switch to light theme" if dark else "Switch to dark theme"),
-        ("quit", "Quit"),
-      )),
+      MenuScreen(
+        (
+          # **Not "raw", which it usually is not.** The collector tidies its own
+          # output before writing it — dropping heartbeats, joining records,
+          # decoding payloads — and "raw" promised the opposite of what arrives.
+          # It cannot say "tidy" either: `TIDY_LOGS` is the collector's setting,
+          # this process cannot read it, and `LOG_COMMAND` can be pointed at any
+          # command on any host, so what this pane shows need not come from the
+          # collector whose archive is open. Naming the source is the one claim
+          # that is true in every arrangement. Jason's, 2026-08-07.
+          ("logs", "View collector log"),
+          ("refresh", "Refresh"),
+          ("theme", "Switch to light theme" if dark else "Switch to dark theme"),
+          ("quit", "Quit"),
+        ),
+        header=self.menu_facts(),
+        title=f" mesh-console {__version__} ",
+      ),
       self.menu_chosen,
+    )
+
+
+  def menu_facts(self) -> tuple[tuple[str, str], ...]:
+    """The four lines above the rule: what this program is and what it is reading.
+
+    Read at open rather than kept current, which is the right trade for a modal that
+    is on screen for a second or two — and the reason `Updated` is worth having at
+    all is that it is a *snapshot*: a reader who wants a newer one closes the menu
+    and opens it again, or presses `r`.
+
+    Every line survives an unreadable archive, because `self.read` answers None and
+    the menu has to open regardless. A dropped connection reports `unknown` schema
+    and `never` updated, which is what this process actually knows at that moment.
+    """
+    # The file, not the path. The path is long, often absolute, and identifies the
+    # host rather than the archive; the basename is what distinguishes two archives
+    # from each other, which is the question this line exists for.
+    db_path = str(Config.get("DB_PATH", "") or "")
+    archive = Path(db_path).name if db_path else "none configured"
+
+    # Both halves, because the archive's own version cannot be wrong on its own —
+    # this console refuses to open anything below its floor, so a mismatch would
+    # have stopped it at startup. What this pair *can* show is the console being
+    # behind its collector: an archive at 0.11.0 against a reader that requires
+    # 0.10.0 is reading a schema with columns it knows nothing about.
+    schema = self.read(db.get_meta, "schema_version") or "unknown"
+
+    return (
+      ("Archive", archive),
+      ("Schema", f"{schema} · reads {REQUIRED_SCHEMA}+"),
+      ("Updated", format_age(self.read(db.fetch_latest_rx_time))),
+      ("Sending", self.send_state),
     )
 
 
@@ -3132,6 +3204,7 @@ class MeshConsoleApp(App):
     self.sender = None
 
     if not self.send_configured:
+      self.send_state = SEND_DISABLED
       self.update_compose()
       return
 
@@ -3140,6 +3213,7 @@ class MeshConsoleApp(App):
       # path. Said out loud rather than left as a box that never appears, because
       # a missing extra is a configuration mistake and silence looks identical to
       # "the collector is not running".
+      self.send_state = SEND_MISCONFIGURED
       self.send_unavailable_reason = (
         "ENABLE_SEND is on but mesh-link is not installed, so this console "
         "cannot send. Reinstall with `uv sync --extra send`, or turn ENABLE_SEND "
@@ -3152,6 +3226,14 @@ class MeshConsoleApp(App):
     if not self.read(get_meta_bool, "accepts_transmit"):
       # The collector last came up without a control socket. Nothing to ask, and
       # asking would mean a connect attempt that is certain to fail.
+      #
+      # Misconfigured rather than unavailable, and it is the softer of the two
+      # misconfigurations: this console was told to offer sending and the archive
+      # says its writer does not carry messages, which is a contradiction between
+      # two processes' settings rather than a mistake in either one. A collector
+      # deliberately started without a socket lands here too, so the word is about
+      # the arrangement and not an accusation.
+      self.send_state = SEND_MISCONFIGURED
       self.send_unavailable_reason = (
         "The collector is not serving a control socket, so there is nothing to "
         "send through."
@@ -3160,6 +3242,11 @@ class MeshConsoleApp(App):
       return
 
     self.sender = send.Sender()
+    # Every gate that can be answered cheaply is open; the socket has the last word
+    # and is being asked in a thread. Anyone reading the state before the answer
+    # arrives gets the truth about where it stands rather than a guess at what it
+    # will be — see `on_probe_finished`.
+    self.send_state = SEND_CHECKING
     self.update_compose()
     self.probe_collector()
 
@@ -3187,6 +3274,11 @@ class MeshConsoleApp(App):
 
   def on_probe_finished(self, available: bool) -> None:
     self.send_available = available
+
+    # The socket had the last word. Not misconfigured either way: everything this
+    # console could check was right, and all that is left is whether anything is
+    # listening — which is a fact about a running process, not about settings.
+    self.send_state = SEND_ENABLED if available else SEND_UNAVAILABLE
 
     if not available and self.send_unavailable_reason is None:
       self.send_unavailable_reason = (

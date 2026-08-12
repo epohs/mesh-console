@@ -268,6 +268,43 @@ def fetch_stats(
 
 
 
+def fetch_latest_rx_time(conn: sqlite3.Connection) -> Optional[int]:
+  """When the newest message in the archive arrived, or None if there are none.
+
+  The one question nothing else here answers: **is this archive still being
+  written?** Every count on the dashboard reads the same on a live mesh and on one
+  whose collector died an hour ago, and the only other way to find out is to open
+  the log. An age derived from this is what the menu prints.
+
+  Both tables, because either can hold the newest thing that arrived and a console
+  configured not to *display* direct messages is still looking at an archive that
+  receives them — this is a question about the writer, not about the view, so
+  `show_direct_messages` deliberately does not reach it. MAX over an empty table is
+  NULL, MAX of a value and NULL is the value, so a collector that archives no
+  direct messages needs no special case here.
+
+  This is deliberately not the database file's mtime, which was the alternative and
+  answers a subtly different question: SQLite touches the file for writes that are
+  not messages at all — a node's telemetry, a channel's name, the collector
+  republishing its policy keys on startup — so mtime says "the collector is alive"
+  where this says "the mesh is being heard". The distinction matters on a quiet
+  mesh, where these two diverge for hours at a time, and Jason chose this one.
+  """
+  row = conn.execute(
+    """
+    SELECT MAX(newest) AS newest FROM (
+      SELECT MAX(rx_time) AS newest FROM messages
+      UNION ALL
+      SELECT MAX(rx_time) AS newest FROM direct_messages
+    )
+    """
+  ).fetchone()
+
+  return row["newest"] if row is not None else None
+
+
+
+
 def fetch_unread_channel_counts(
   conn: sqlite3.Connection,
   cursors: dict[int, tuple[int, int]],

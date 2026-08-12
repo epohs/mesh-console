@@ -17,7 +17,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Label, ListItem, ListView
+from textual.widgets import Label, ListItem, ListView, Rule
 
 from mesh_console.ui.logfmt import LEVELS, NO_LEVEL, LogLine, notice, read_line, wrap
 from mesh_console.ui.widgets import LogFooter, LogStream
@@ -46,6 +46,18 @@ class MenuScreen(ModalScreen[Optional[str]]):
   from the caller because their labels are the caller's state — "Switch to
   light theme" depends on which theme is up, and this screen has no business
   knowing.
+
+  **The header above the rule is facts about the program**, and the only surface
+  in this interface that carries any: everything else here is about the mesh. It
+  arrives the same way the entries do and for the same reason — the version, the
+  archive's schema, how long since anything was heard and whether sending is set
+  up are all the app's to know, and a screen that read them itself would be a
+  modal that cannot be mounted on its own. `title` is the same bargain.
+
+  Header rows are `Label`s and not `MenuItem`s, which matters: a fact inside
+  `#menu-list` would be a `ListItem`, and therefore highlightable, arrow-key
+  reachable and selectable. Keeping them out of the `ListView` is what makes them
+  unselectable without a single special case in the navigation.
   """
 
 
@@ -54,13 +66,45 @@ class MenuScreen(ModalScreen[Optional[str]]):
   ]
 
 
-  def __init__(self, entries: Iterable[tuple[str, str]]) -> None:
+  def __init__(
+    self,
+    entries: Iterable[tuple[str, str]],
+    header: Iterable[tuple[str, str]] = (),
+    title: str = "",
+  ) -> None:
     self.entries = tuple(entries)
+    self.header = tuple(header)
+    self.title_text = title
     super().__init__()
 
 
   def compose(self) -> ComposeResult:
     with Vertical(id="menu"):
+      if self.header:
+        # One Label per fact, values in a column. `format_fields` is the obvious
+        # reuse and is deliberately not used: it writes `Label:` with a colon, which
+        # is right for a detail panel listing a row's fields and wrong for a status
+        # block, and it drops any line whose value is empty — right for a sparse
+        # archive row, wrong here, where a fact the console could not determine has
+        # to appear *saying so*. Every value below is a word even when the answer is
+        # `unknown`, which is the same rule stated from the other end.
+        #
+        # A Label each rather than one multi-line Label, so a future line can be
+        # coloured by what it says — an `unavailable` in the palette's warning colour
+        # is the obvious next want, and one Label per fact is what leaves room for it.
+        width = max(len(label) for label, _ in self.header)
+        for label, value in self.header:
+          yield Label(
+            f"{label:<{width}}  {value}", markup=False, classes="menu-fact"
+          )
+        # Jason's, and it earns its row: without it the facts and the commands are
+        # one block of nine similar lines, and the first thing a reader does with a
+        # menu is look for where the choices start.
+        # `solid`, matching the box's own `border: solid` — the default `ascii`
+        # draws hyphens, which inside a frame made of `─` reads as a different kind
+        # of line rather than as the same one turned inward.
+        yield Rule(line_style="solid")
+
       yield ListView(
         *(MenuItem(key, label) for key, label in self.entries),
         id="menu-list",
@@ -68,6 +112,11 @@ class MenuScreen(ModalScreen[Optional[str]]):
 
 
   def on_mount(self) -> None:
+    # The frame names the program, where the log viewer's names the command it is
+    # following. Same idiom, and it costs no row inside the box.
+    if self.title_text:
+      self.query_one("#menu", Vertical).border_title = self.title_text
+
     listing = self.query_one("#menu-list", ListView)
     listing.focus()
     # A menu opens pointing at something, unlike the message list: every row

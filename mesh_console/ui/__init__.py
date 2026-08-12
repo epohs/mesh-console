@@ -683,6 +683,19 @@ class MeshConsoleApp(App):
     self.resync_owed: bool = False
     self.resync_following: bool = False
 
+    # When the poll first found something on top of the main screen, and therefore
+    # how much of the screen underneath it has skipped drawing. None while the main
+    # screen is on top, and None again the moment it is back — see `poll_hidden`
+    # and `screen_returned`.
+    #
+    # **Measured from the first skipped poll rather than from the push**, which
+    # under-reports by up to one interval and is the right trade: a push hook would
+    # have to be maintained at every call site that ever opens a screen, and what
+    # this number is compared against is a minute. It also makes the arithmetic
+    # honest in the one case that matters — a menu opened and closed between two
+    # polls skipped nothing, so it left nothing to catch up on, and this stays None.
+    self.hidden_since: Optional[float] = None
+
     # Watched so a swapped device or a rebuilt database is noticed rather than
     # rendered as though nothing happened.
     self.known_local_node_id: Optional[str] = None
@@ -3537,10 +3550,24 @@ class MeshConsoleApp(App):
 
 
   def menu_chosen(self, choice: Optional[str]) -> None:
-    """Run what the menu picked. None is escape, and does nothing."""
+    """Run what the menu picked. None is escape, and does nothing.
+
+    Every branch but one is a return to the main screen, and says so — the poll
+    stopped drawing while this was open and `screen_returned` is what starts it
+    again. The exception is the viewer, which is not a return at all: the main
+    screen is covered again in the same breath, and the clock the guard keeps should
+    go on running across the handover rather than be reset by the instant between two
+    modals. Pushed with the same callback, so the viewer's own close is the return.
+    """
     if choice == "logs":
-      self.push_screen(LogViewerScreen(Config.get("LOG_COMMAND", "")))
-    elif choice == "refresh":
+      self.push_screen(
+        LogViewerScreen(Config.get("LOG_COMMAND", "")), self.screen_returned
+      )
+      return
+
+    self.screen_returned()
+
+    if choice == "refresh":
       # Through the scheduler because this callback is synchronous and refresh
       # is a coroutine; `call_later` awaits it on the message pump.
       self.call_later(self.action_refresh)
@@ -4937,6 +4964,24 @@ class MeshConsoleApp(App):
       self.record_poll_failure()
       return
 
+    # **Everything below this line draws on the main screen, and with something
+    # pushed over it there is nothing there to see.** Measured against the fixture
+    # archive: a poll on the dashboard view issues eleven statements — four counts,
+    # a `LEFT JOIN … GROUP BY` across the whole messages table, the local node, both
+    # unread tallies and the node page — and then rebuilds the device bar, the
+    # dashboard, every channel row's counts and every node row. With the log viewer
+    # on top it issued the same eleven and redrew the same widgets, none of which is
+    # reachable: `#log-frame` has its own background and covers everything but the
+    # two-row ring of padding around it. On the Pi that was a ~32% CPU spike for half
+    # a second, every ten seconds, for nothing anybody could look at.
+    #
+    # The reconnect above stays on this side of the guard, because an archive that
+    # has gone away is worth noticing whatever is on screen, and because it is the
+    # one thing here that costs nothing when there is nothing wrong.
+    if len(self.screen_stack) > 1:
+      self.poll_hidden(now)
+      return
+
     stats = self.read(
       db.fetch_stats, self.show_direct_messages,
       list_unnamed=self.list_unnamed_nodes,
@@ -4955,7 +5000,12 @@ class MeshConsoleApp(App):
     # here rather than from a screen hook because the poll is already the thing
     # that runs on its own every few seconds, and being a few seconds late to
     # rebuild a sidebar nobody has looked at yet costs nothing.
-    if self.resync_owed and len(self.screen_stack) == 1:
+    #
+    # The stack depth this used to test for is the guard's business now, and by here
+    # it is always one — `screen_returned` is what runs the poll that finds this
+    # flag, usually within a frame of the viewer closing rather than at the next
+    # interval.
+    if self.resync_owed:
       self.flush_positions()
       self.call_later(self.resync)
       return
@@ -4998,6 +5048,119 @@ class MeshConsoleApp(App):
       self.refresh_node_rows(stats)
 
     self.flush_positions()
+
+
+
+
+  def poll_hidden(self, now: float) -> None:
+    """The whole of what a poll owes while something is on top of the main screen.
+
+    **Two reads in place of eleven and a full redraw** — a meta lookup and the node
+    row it names — and neither is read for what it says. Nothing here consumes the
+    local node it fetches; what is wanted is whether it can be fetched at all. Without
+    a read of some kind an
+    archive that has gone away looks exactly like a healthy one for as long as the
+    viewer is up — `self.conn` is only ever cleared by a read that fails, so nothing
+    would retry the connection and the banner would still be absent at the moment the
+    stack came back down, which is precisely when a reader is looking for it.
+
+    None is an ambiguous answer here and `self.conn` is what disambiguates it: an
+    archive whose collector has not yet named the attached device answers None with
+    the connection perfectly intact, and that is not a failure. `self.read` drops the
+    connection on its way out of a failed read and nothing else in this class does,
+    so the connection being gone is the failure, and the None is not.
+
+    **A swapped device or a rebuilt database is deliberately not handled here.** The
+    probe would see it — the identity is in the row it just read — and acting on it
+    would mean a notification nobody is looking at and a drop back to a dashboard
+    nobody can see. Leaving `known_local_node_id` untouched is what keeps it
+    noticeable instead: the first visible poll after the stack comes down compares
+    against the device from before the viewer was ever opened, finds the change
+    sitting there waiting, and does the whole of `check_for_state_change` at the
+    moment there is somebody to tell.
+
+    Read positions are still flushed. They are not view work — a poll behind the
+    viewer is the only thing that would ever persist what was marked read just before
+    it opened, and the write costs nothing on a poll where nothing was marked.
+    """
+    if self.hidden_since is None:
+      self.hidden_since = now
+
+    self.read(db.fetch_local_node)
+    if self.conn is None:
+      self.record_poll_failure()
+      return
+
+    # Guarded rather than said every time, because `set_connection_error` writes to
+    # a widget on the screen underneath and a widget refreshed is a screen the
+    # compositor has to consider again. A modal screen in Textual sits on a 60%
+    # background, so what is underneath is genuinely still being composited — the
+    # cheapest thing to hand it is no change at all.
+    if self.poll_failures:
+      self.poll_failures = 0
+      self.set_connection_error(False)
+
+    self.flush_positions()
+
+
+
+
+  def screen_returned(self, _result: Any = None) -> None:
+    """The main screen is on top again. Undo exactly as much as the guard skipped.
+
+    Wired as the dismiss callback of both screens that can cover the main one, so
+    the catch-up happens within a frame of the viewer closing rather than up to a
+    poll interval later. That distinction is new and it is the reason this exists:
+    the deferral this pairs with used to leave only the sidebar's *ordering* stale,
+    which nobody notices, and now leaves every number on screen as old as the
+    viewer, which they would.
+
+    Nothing to do unless a poll was actually skipped. A menu opened and closed
+    between two polls froze nothing at all, and `hidden_since` is still None.
+
+    **How long it was covered decides which of two different catch-ups runs, and
+    conflating them was the trap.** A minute in the log viewer leaves a screen stale
+    the way a late poll is stale: every value on it is a few seconds old, and one
+    poll fixes all of it without moving anything. An hour leaves the *shape* of the
+    screen wrong as well — the node list is in the order things were heard in an hour
+    ago, missing everything first heard since — and the only answer to that is the
+    rebuild `resync` does. But a rebuild deselects whatever row was selected, so
+    reaching for it on every return would mean a two-second glance at ctrl+p came
+    back having thrown away the node somebody was about to press enter on. So the
+    line is `STALE_AFTER_SECONDS`, which is the same number `on_app_focus` draws for
+    the same distinction, and for anything short of it this is one ordinary poll.
+
+    Whether the message pane was following can be asked here rather than caught on
+    the way in, which is where it parts company with `blurred_following`. That one
+    cannot be asked late because the poll goes on appending messages while the
+    terminal is behind another window; this one can, because the poll behind a modal
+    is precisely what has *not* been running, so the answer is still the one from
+    before the screen was covered.
+
+    **Both catch-ups go through the scheduler, and that is not a style choice.**
+    `Screen.dismiss` invokes this callback and *then* pops (screen.py:2064-2067), so
+    for the length of this method the screen being closed is still on the stack —
+    which means a `poll()` called directly from here would find a depth of two, take
+    the guard's branch straight back out, and arm `hidden_since` afresh on a screen
+    that is one instant from being gone. `request_resync` reads the same depth to
+    decide whether it may run now. Verified against the installed Textual rather than
+    assumed, and it is why the work is handed to the message pump instead: by the time
+    the pump reaches it the pop has happened and both of them see the depth they are
+    asking about.
+    """
+    hidden_since = self.hidden_since
+    self.hidden_since = None
+
+    if hidden_since is None:
+      return
+
+    if monotonic() - hidden_since >= STALE_AFTER_SECONDS:
+      self.call_later(
+        self.request_resync, self.viewing_messages and not self.has_more_newer
+      )
+      return
+
+    self.call_later(self.poll)
 
 
 

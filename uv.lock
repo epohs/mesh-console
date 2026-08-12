@@ -74,7 +74,7 @@ provides-extras = ["send"]
 
 [[package]]
 name = "mesh-link"
-version = "0.1.0"
+version = "0.2.0"
 source = { directory = "../mesh-link" }
 
 [[package]]

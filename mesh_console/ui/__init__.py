@@ -65,7 +65,7 @@ from mesh_console.ui.format import (
   format_uptime,
 )
 from mesh_console.ui.screens import LogViewerScreen, MenuScreen
-from mesh_console.ui.tapbacks import is_tapback
+from mesh_console.ui.tapbacks import is_emoji_only, is_tapback
 from mesh_console.ui.theme import (
   DEFAULT_THEME, RXONLY_DARK, RXONLY_LIGHT, THEMES, palette_for,
 )
@@ -4281,13 +4281,28 @@ class MeshConsoleApp(App):
     if sender is None:
       return
 
+    # A reply whose text is nothing but emoji is a reaction, and goes out with the
+    # flag that says so. Jason's call, and the trade it accepts is that a deliberate
+    # one-emoji *reply* can no longer be sent — a one-emoji message still can, which
+    # is the case that matters, because without a reply_to there is nothing for a
+    # reaction to attach to and the flag is never set.
+    #
+    # `is_emoji_only` rather than a rule written here, because it is the same
+    # predicate `is_tapback()` fell back on for every row written before the flag
+    # existed: one to three clusters, by the scanner in `tapbacks.py`. Sharing it
+    # means the reactions this console sends are exactly the ones it would have
+    # recognised, and the two cannot drift apart on what counts as emoji.
+    emoji = reply_to is not None and is_emoji_only(text)
+
     try:
       if peer is not None:
         result = sender.send_to_peer(
-          text, peer, channel_index=channel_index, reply_to=reply_to
+          text, peer, channel_index=channel_index, reply_to=reply_to, emoji=emoji
         )
       else:
-        result = sender.send_to_channel(text, channel_index, reply_to=reply_to)
+        result = sender.send_to_channel(
+          text, channel_index, reply_to=reply_to, emoji=emoji
+        )
     except send.SendFailed as failure:
       self.call_from_thread(self.on_send_failed, failure.advice, failure.detail)
       return

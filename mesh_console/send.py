@@ -208,6 +208,7 @@ class Sender:
     channel_index: int,
     *,
     reply_to: Optional[int] = None,
+    emoji: Optional[bool] = None,
   ) -> dict[str, Any]:
     """Ask the collector to broadcast one message on one channel.
 
@@ -227,6 +228,7 @@ class Sender:
           destination=BROADCAST,
           channel_index=channel_index,
           reply_to=reply_to,
+          emoji=emoji,
         )
     except ControlError as e:
       raise SendFailed(e.code, e.message) from e
@@ -246,6 +248,7 @@ class Sender:
     *,
     channel_index: int = 0,
     reply_to: Optional[int] = None,
+    emoji: Optional[bool] = None,
   ) -> dict[str, Any]:
     """Ask the collector to send one message to one node.
 
@@ -275,6 +278,7 @@ class Sender:
           destination=node_id,
           channel_index=channel_index,
           reply_to=reply_to,
+          emoji=emoji,
         )
     except ControlError as e:
       raise SendFailed(e.code, e.message) from e

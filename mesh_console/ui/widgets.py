@@ -716,6 +716,11 @@ class MessageItem(ListItem):
   The tapbacks arrive the same way and for the same kind of reason: which
   messages were absorbed into this one is a question about the loaded window, not
   about a row.
+
+  `orphan` is decided in the same place and on the same principle. Whether this
+  reaction's parent is anywhere in the archive is a question about the archive,
+  answered by `rebuild_rows` from the LEFT JOIN, and a row that has to ask it
+  here would be deciding rather than rendering.
   """
 
 
@@ -725,10 +730,12 @@ class MessageItem(ListItem):
     outbound: bool = False,
     tapbacks: Optional[list[dict[str, Any]]] = None,
     unread: bool = False,
+    orphan: bool = False,
   ) -> None:
     self.message = message
     self.outbound = outbound
     self.tapbacks = tapbacks or []
+    self.orphan = orphan
     super().__init__()
 
     if outbound:
@@ -764,9 +771,23 @@ class MessageItem(ListItem):
     # put what is being answered *after* the answer's byline and read as though the
     # quote belonged to the reply's author. Above, it is the thing this message
     # arrived on top of, which is what it is.
-    reply_line = format_reply_line(self.message)
-    if reply_line is not None:
-      yield Label(reply_line, markup=False, classes="message-reply-bar")
+    if self.orphan:
+      # In the reply bar's place, and it has to be here rather than left to
+      # `format_reply_line`: that function already declines a message whose
+      # parent is missing (it has nothing to excerpt), so an orphan reaction
+      # would otherwise render as a bare `💪` from nobody, with no indication it
+      # was aimed at anything at all.
+      #
+      # Deliberately not styled as the bar. The bar is a quote of the parent —
+      # background, label, excerpt — and dressing this like one would promise a
+      # message that is not in the archive.
+      yield Label(
+        "reacting to an earlier message", markup=False, classes="message-orphan-note"
+      )
+    else:
+      reply_line = format_reply_line(self.message)
+      if reply_line is not None:
+        yield Label(reply_line, markup=False, classes="message-reply-bar")
 
     yield MessageHeader(self.message, self.outbound)
 

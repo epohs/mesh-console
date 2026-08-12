@@ -30,9 +30,13 @@ from mesh_console.db.connection import get_meta, get_meta_int
 FALLBACK_MAX_MESSAGES = 50
 
 # The columns every message row carries, whichever table it came from.
+#
+# `m.emoji` is why this reader's floor moved to schema 0.10.0. Because this list
+# is shared by both tables, selecting it here required the column on
+# direct_messages as well as messages — the schema added both for that reason.
 _MESSAGE_COLUMNS = """
   m.id, m.message_id, m.from_node, m.text, m.rx_time,
-  m.snr, m.rssi, m.reply_to, m.via_mqtt,
+  m.snr, m.rssi, m.reply_to, m.via_mqtt, m.emoji,
   n.long_name AS from_node_long_name,
   n.short_name AS from_node_short_name,
   tn.long_name AS to_node_long_name,

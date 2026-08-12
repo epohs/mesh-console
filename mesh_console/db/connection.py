@@ -16,17 +16,25 @@ from mesh_console.config import Config
 # version at least this high, and this constant moves only when a query here
 # starts depending on something newer.
 #
-# This is 0.8.0 for a concrete reason: `_NODE_COLUMNS` in queries.py selects the
-# six telemetry columns 0.8.0 added, so 0.8.0 is the oldest archive this code can
-# open. It was 0.7.0 before that, for direct_messages.to_node, and 0.6.0 before
-# that. Each move up is the same trade taken knowingly: the reader gains what the
-# new column shows and loses the ability to read the archives written before it.
+# This is 0.10.0 for a concrete reason: `_MESSAGE_COLUMNS` in queries.py selects
+# `emoji`, which 0.10.0 added, so 0.10.0 is the oldest archive this code can open.
+# It was 0.8.0 before that for the six telemetry columns in `_NODE_COLUMNS`,
+# 0.7.0 before that for direct_messages.to_node, and 0.6.0 before that. Each move
+# up is the same trade taken knowingly: the reader gains what the new column
+# shows and loses the ability to read the archives written before it.
 #
-# RxOnly moved to 0.8.0 in the same session and for the same reason. That the two
+# RxOnly moved to 0.10.0 in the same session and for the same reason. That the two
 # readers happen to agree right now is not the arrangement changing — the constants
 # are still separate, still deliberately not imported from one another, and the next
 # column either of them selects alone will part them again.
-REQUIRED_SCHEMA = "0.8.0"
+#
+# The trade is cheaper than it was. Until 0.10.0 the collector met a version bump
+# by rebuilding, so raising this floor meant a reader that could not open the
+# archive it had until the archive was thrown away and rebuilt; the collector now
+# upgrades an additive bump in place and keeps its rows. What the floor still
+# costs is order — the collector has to run first, because this refuses an archive
+# it has not migrated yet.
+REQUIRED_SCHEMA = "0.10.0"
 
 
 

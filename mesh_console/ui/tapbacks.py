@@ -216,12 +216,32 @@ def is_emoji_only(text: Optional[str]) -> bool:
 def is_tapback(message: dict[str, Any]) -> bool:
   """Whether a message is a reaction to another one rather than a message.
 
-  Both halves matter. Emoji-only text that replies to nothing is somebody saying
-  `👍` to the channel, and it stays a message; a reply that says anything else is
-  a reply, and keeps its reply bar.
+  A reaction is always a reply, so replying to nothing settles it: emoji-only
+  text addressed to the channel is somebody saying `👍` out loud, and it stays a
+  message.
+
+  Past that, the archive may simply know. Schema 0.10.0 records the firmware's
+  own emoji flag, and where it is present it decides — the sending client said
+  what it was doing, and is_emoji_only() only ever inferred it from the text.
+  The inference is wrong in both directions: a deliberate one-emoji reply reads
+  as a reaction, and a client that reacts with something this function does not
+  count as emoji-only does not.
+
+  `emoji is None` is a row written before 0.10.0, whose flag was never recorded
+  and is deliberately never backfilled. The heuristic remains the whole answer
+  for those rows and only for those — tested with `is None` rather than
+  falsiness, because a recorded 0 is an answer and means "not a reaction".
+
+  Mirrors `is_tapback` in RxOnly's messages.js, flag-first branch included. The
+  two are kept in step by hand; neither imports the other.
   """
   if message.get("reply_to") is None:
     return False
+
+  emoji = message.get("emoji")
+  if emoji is not None:
+    return emoji == 1
+
   return is_emoji_only(message.get("text"))
 
 

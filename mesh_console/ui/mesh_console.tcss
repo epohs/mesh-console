@@ -668,6 +668,18 @@ MessageHeader > .message-header--node {
   text-overflow: ellipsis;
 }
 
+/* The note that stands where the reply bar would, on a reaction whose parent is
+ * not in the archive. Muted like the bar and italic, but with no background: the
+ * bar's fill is what makes it read as a quoted thing, and there is nothing here
+ * being quoted. RxOnly renders the same sentence in `.message-orphan-note`. */
+.message-orphan-note {
+  width: 100%;
+  color: $rx-text-muted;
+  text-style: italic;
+  text-wrap: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* **Every message's words are stepped one column in from the row naming its
  * sender**, which is Jason's and is the second answer here. The first indented only
  * a reply, on the reading that the step was what hung an answer off the quote above

@@ -61,7 +61,7 @@ from mesh_console.ui.format import (
   format_uptime,
 )
 from mesh_console.ui.screens import LogViewerScreen, MenuScreen
-from mesh_console.ui.tapbacks import is_emoji_only, is_tapback
+from mesh_console.ui.tapbacks import is_tapback
 from mesh_console.ui.theme import (
   DEFAULT_THEME, RXONLY_DARK, RXONLY_LIGHT, THEMES, palette_for,
 )
@@ -2606,12 +2606,40 @@ class MeshConsoleApp(App):
     A held tapback is still *in* `self.messages`, which is what keeps it from
     being permanently unread: `mark_read_from_viewport` sweeps the whole window at the
     bottom of a fully loaded channel, and that has never gone by rows.
+
+    **Holding is for a parent that exists. A parent that does not is drawn.** The
+    🏓 rule above is about a window, and paging is what settles it — walk far
+    enough back and the parent arrives. When the parent is not in the archive at
+    all, nothing is coming: the reaction is held forever, drawn nowhere, and
+    counted anyway, which is how a channel came to read `Primary (1)` above `No
+    messages in this channel.` The live archive has exactly one such row, a `💪`
+    answering a message this radio never received.
+
+    `reply_to_text is None` is what separates the two, and it is trustworthy
+    because the query LEFT JOINs the parent against the whole table rather than
+    against the loaded page — see `_MESSAGE_COLUMNS` in db/queries.py. NULL there
+    is the archive saying the parent is not in it, not the window saying it has
+    not been paged in.
+
+    Such a row is drawn as itself, with a muted note where the reply bar would
+    be, because the reply bar's job is to quote the parent and there is no parent
+    to quote. This will become more common rather than less: tapbacks are always
+    newer than their parents, so MAX_MESSAGES pruning takes the parent first.
     """
     rows: list[dict[str, Any]] = []
     row_of_message: dict[int, int] = {}
     held: set[int] = set()
 
     for message in self.messages:
+      if is_tapback(message) and message.get("reply_to_text") is None:
+        # Orphaned: drawn as an ordinary row and flagged so the widget can say
+        # why it has no reply bar. Registered in `row_of_message` like any drawn
+        # message — it has a row of its own now, and a resume naming it should
+        # land on it rather than on the row above.
+        row_of_message[message["message_id"]] = len(rows)
+        rows.append({"message": message, "tapbacks": [], "orphan_tapback": True})
+        continue
+
       if is_tapback(message):
         parent = message["reply_to"]
         # A reaction to a held tapback is held too. `row_of_message` answers for
@@ -2686,6 +2714,7 @@ class MeshConsoleApp(App):
       outbound=self.is_outbound(message),
       unread=self.is_unread(message),
       tapbacks=row["tapbacks"],
+      orphan=row.get("orphan_tapback", False),
     )
 
 
@@ -3410,16 +3439,20 @@ class MeshConsoleApp(App):
     used = send.text_byte_length(box.value)
     box.border_subtitle = f"{used}/{send.MAX_TEXT_BYTES}"
 
-    # A reply whose text is nothing but emoji comes back from the archive as a
-    # tapback, because `is_tapback()` is "replies to something, and is emoji-only"
-    # and the archive records no intent. That means this console can send reactions
-    # for free, which is a feature everybody expects — but discovering it by
-    # accident, after the fact, from a message that turned into a pill, would not
-    # be. So the counter says which of the two is about to happen while it is still
-    # being typed. Jason's call: allowed, and said out loud.
-    if self.reply_to_message is not None and is_emoji_only(box.value):
-      box.border_subtitle += " · reaction"
-
+    # **There was a `· reaction` hint here, and schema 0.10.0 took it away.**
+    #
+    # An emoji-only reply used to come back from the archive as a tapback,
+    # because `is_tapback()` was "replies to something, and is emoji-only" and
+    # the archive recorded no intent — so the console appeared to send reactions
+    # for free, and the hint existed so that nobody discovered it by accident
+    # from a message that turned into a pill.
+    #
+    # The archive records intent now, and `_archive_outbound` writes emoji=0,
+    # truthfully: mesh-link's `SendTextRequest` has no emoji field, so what left
+    # this node was a reply and every other client on the mesh rendered it as
+    # one. The pill was this reader agreeing with itself about a message nobody
+    # else saw that way. Transmit-side tapbacks wait on a protocol revision; the
+    # hint would now promise one this console cannot send, so it goes with it.
     if used > send.MAX_TEXT_BYTES:
       box.add_class("over-limit")
     else:

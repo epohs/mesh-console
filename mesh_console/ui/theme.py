@@ -60,13 +60,34 @@ LIGHT_PALETTE = {
   "rx-text-secondary":  "#33859F",  # --color-text-secondary    oklch(0.578 0.0873 222.49)
   "rx-text-muted":      "#779FAE",  # --color-text-muted        oklch(0.6795 0.0489 222.5)
   "rx-link":            "#6EB1BD",  # --color-link              oklch(72% 0.07 210)
-  "rx-accent-node":     "#F1B32D",  # --color-accent-node       oklch(0.8042 0.1543 81.12)
+  "rx-accent-node":     "#A4770F",  # --color-accent-node       oklch(0.60 0.12 81.12)
   "rx-accent-channel":  "#D75749",  # --color-accent-channel    oklch(0.6202 0.1641 29.03)
   "rx-outbound":        "#0A9068",  # derived  oklch(0.58 0.12  165)
   "rx-warning":         "#C46016",  # derived  oklch(0.60 0.15  50) — see the note below
   "rx-error":           "#D33B36",  # derived  oklch(0.58 0.19  27)
   "rx-on-accent":       "#0D0600",  # derived — dark in both palettes, see below
 }
+
+# `rx-accent-node` moved in the light palette only, on 2026-08-13, and the mapping
+# above is still one-to-one: rxonly.css moved first and the full reasoning is in the
+# comment there. The short of it is that the light entry was the dark entry copied —
+# 0.8042 against 0.8029 — and had never been checked against a near-white page, where
+# it managed **1.69:1**. This suite's word for "a node" was therefore unreadable in the
+# light theme in both interfaces at once: every sidebar row here, every `.node-link`
+# there, and every node id in the log viewer.
+#
+# It is 3.63:1 now, beside `rx-accent-channel`'s 3.55:1 — which is the entry that was
+# tuned for both themes and is the model for what this should have been. Same hue,
+# darkened rather than replaced.
+#
+# **The lightness is also a gamut floor, and that is what ties it to this file.** Below
+# 0.60 the chroma at hue 81.12 leaves sRGB, and the hex here would then be *this*
+# project's clipping of an out-of-gamut colour while the browser applied its own — two
+# different answers to "what colour is it", which is exactly the drift the one-to-one
+# mapping exists to prevent. Both sides agree at 0.60.
+#
+# The dark entry is untouched at 10.74:1. Found by the suite testbed, which is also
+# where the arithmetic above is asserted.
 
 # `rx-warning` was `oklch(… 70)` in both palettes and moved to hue 50 on 2026-08-07.
 # It was an amber sitting eleven degrees of hue off `--color-accent-node`, which is

@@ -746,10 +746,29 @@ ChannelItem.unread {
   color: $rx-link;
 }
 
+/* "There is more below, and here is the key that gets you there."
+ *
+ * **`$rx-text-secondary` rather than `$rx-text-muted`, and the band is why.** Muted is
+ * the right colour for metadata sitting on the page — a timestamp, a last-seen line —
+ * and it is 2.4:1 there by design, the same recession RxOnly gives the same elements.
+ * On this fill it was **1.84:1 in the dark palette and 2.35:1 in the light one**: the
+ * worst contrast anywhere in the interface, on the one line that is not metadata at
+ * all but an instruction the reader is meant to act on.
+ *
+ * Which is the same fault the selected sidebar row had, one rule up — a colour chosen
+ * against the page, reused on a raised band, where the band closes the gap instead of
+ * opening it. Secondary on this fill is 9.17:1 and 3.45:1, and it is already this
+ * stylesheet's colour for chrome that has something to say without shouting: the two
+ * panel headings and the device bar.
+ *
+ * Found by the suite testbed, which sweeps every widget with an opaque fill of its own
+ * for exactly this shape of mistake.
+ */
+
 #messages-status {
   display: none;
   background: $rx-bg-surface-alt;
-  color: $rx-text-muted;
+  color: $rx-text-secondary;
   padding: 0 1;
 }
 

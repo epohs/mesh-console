@@ -186,6 +186,17 @@ READ_MARGIN_MIN_LINES = 4
 # milliseconds. Textual's set_timer is enough for this; there is no thread.
 NODE_FILTER_DEBOUNCE = 0.3
 
+# What the mark at the right of the filter box is drawn with — RxOnly's
+# `.nodes-search-clear`, which is an inline SVG there and has to be one character here.
+#
+# **U+2715, and the width is the whole of why.** This was going to be the enclosed
+# `ⓧ` (U+24E7), which is the nicer glyph and is East Asian *Ambiguous* in
+# `EastAsianWidth.txt`: Rich measures it as one cell, and a terminal configured to draw
+# ambiguous glyphs double-wide draws it as two — so the mark would have been laid out
+# for one column and painted over another. U+2715 is Neutral, which is one cell
+# everywhere, and the stylesheet reserves a second column anyway.
+FILTER_CLEAR_GLYPH = "✕"
+
 # A filtered node list is fetched whole rather than paged, which is what RxOnly
 # does (nodes.js:62) and is the simpler thing to be right about: a search that
 # pages has to keep an offset in step with a query the reader is still typing.
@@ -907,7 +918,16 @@ class MeshConsoleApp(App):
         # Between the heading and the list it filters, which is where RxOnly
         # puts it and where it reads as belonging to the list below rather than
         # to the sidebar as a whole.
-        yield Input(id="node-filter", placeholder="Filter nodes…")
+        #
+        # The row exists to put the clear mark at the box's right edge; the box
+        # keeps its own id, which is what every other reference to it goes
+        # through — `PANEL_HEADINGS`, `PASTE_TARGETS`, the focus ring, and both
+        # `Input` handlers all name `#node-filter` and none of them care what it
+        # is wrapped in. See the stylesheet for why this is two widgets rather
+        # than one with something drawn over it.
+        with Horizontal(id="node-filter-row"):
+          yield Input(id="node-filter", placeholder="Filter nodes…")
+          yield Static(id="node-filter-clear", markup=False)
         yield ListView(id="nodes")
 
       with Vertical(id="main"):
@@ -934,6 +954,20 @@ class MeshConsoleApp(App):
   def on_mount(self) -> None:
     self.show_view(VIEW_DASHBOARD)
     self.set_breadcrumbs("Dashboard")
+
+    # The clear mark's content, written once. Only its visibility moves after this —
+    # see `update_node_filter_clear` — so the `@click` is attached in one place and
+    # never rebuilt per keystroke.
+    #
+    # A `Text` with a `@click` meta rather than a marked-up string, which is how every
+    # other clickable thing in this file is built and for the same two reasons: a span
+    # carrying one is a link as far as Textual is concerned, which is what earns it the
+    # `link-*-hover` treatment, and nothing goes through an action string to be parsed.
+    # `app.`-qualified because Textual brokers a `@click` from the widget it landed on,
+    # and a bare name would resolve against that `Static`, which has no such action.
+    self.query_one("#node-filter-clear", Static).update(
+      Text(FILTER_CLEAR_GLYPH, style=Style(meta={"@click": "app.clear_node_filter"}))
+    )
 
     # Scrolling the node list pages it, the way the wheel does on the web. Here
     # rather than in `compose` because the widget has to exist to be watched, and
@@ -1665,6 +1699,59 @@ class MeshConsoleApp(App):
     self.node_filter_timer = self.set_timer(
       NODE_FILTER_DEBOUNCE, lambda: self.apply_node_filter(value.strip())
     )
+
+
+
+
+  def update_node_filter_clear(self, value: str) -> None:
+    """Show the clear mark while there is something to clear, and hide it otherwise.
+
+    Called undebounced, unlike the query beside it, and that is deliberate: whether
+    the box has anything in it is a fact about the box rather than a question for the
+    archive, so there is nothing to wait for. RxOnly toggles its own button from
+    inside the debounce (nodes.js:36) and pays 300ms for it; a mark that appeared a
+    third of a second after the first keystroke would read as lag.
+    """
+    self.query_one("#node-filter-clear", Static).set_class(bool(value), "visible")
+
+
+
+
+  def action_clear_node_filter(self) -> None:
+    """Empty the filter box and put the whole node list back.
+
+    Reached by clicking the `✕` at the right of the box, which is RxOnly's
+    `clear_nodes_search` (nodes.js:141) and the one thing this had no equivalent for:
+    a filter could be typed with the mouse nowhere near the keyboard and then only be
+    taken off by hand, a character at a time.
+
+    **The keyboard is left exactly where it was, and nothing here has to arrange
+    that.** Textual focuses on mouse-down before forwarding the click, but
+    `get_focusable_widget_at` walks up from the widget under the pointer and stops at
+    the first *focusable* node — a `Static` is not one, and neither is the row, the
+    sidebar or the screen above it, so it finds nothing and no focus moves. A reader
+    who was typing in the box is still typing in it; one who was reading a channel
+    stays in the channel. There is nothing to restore, which is why nothing is saved.
+
+    Applied at once rather than through `NODE_FILTER_DEBOUNCE`. The wait exists to let
+    typing finish and a click has finished by the time it arrives — the same reason
+    `on_input_submitted` stops the timer before applying.
+
+    **The `Input.Changed` that emptying the box posts arrives after this returns**, and
+    finds nothing left to do: Textual queues messages rather than calling handlers, so
+    the two lines below run first, and by the time `on_node_filter_changed` sets its
+    own timer `node_search` is already `""` and the `apply_node_filter` at the end of
+    it returns early. The mark is hidden here rather than left to that handler so it
+    goes in the same frame as the text it describes.
+    """
+    self.query_one("#node-filter", Input).value = ""
+    self.update_node_filter_clear("")
+
+    if self.node_filter_timer is not None:
+      self.node_filter_timer.stop()
+      self.node_filter_timer = None
+
+    self.apply_node_filter("")
 
 
 
@@ -4258,6 +4345,9 @@ class MeshConsoleApp(App):
 
   def on_input_changed(self, event: Input.Changed) -> None:
     if event.input.id == "node-filter":
+      # The mark first and unwaited, the query after and debounced. See
+      # `update_node_filter_clear` for why the two are not on the same clock.
+      self.update_node_filter_clear(event.value)
       self.on_node_filter_changed(event.value)
       return
 

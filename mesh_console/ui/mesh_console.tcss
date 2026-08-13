@@ -536,13 +536,67 @@ ChannelItem.unread {
  * the same look for none of the cost.
  */
 
+/* `1fr` is what leaves the mark beside it its two columns, and it is also what makes
+ * the pair add up to the row: the box is the only thing here that flexes.
+ */
+
 #node-filter {
+  width: 1fr;
   height: 1;
   border: none;
   padding: 0 1;
-  margin: 0 0 1 0;
+  margin: 0;
   background: $rx-bg-app;
   color: $rx-text-primary;
+}
+
+/* The `✕` that empties the box: RxOnly's `.nodes-search-clear`, on the same terms —
+ * there while the box has something in it, gone when it does not
+ * (`.nodes-search-clear[hidden]`).
+ *
+ * **Two columns for a one-column glyph.** The spare one is on the right, which is the
+ * same inset `#node-filter` gives its own text, so the mark sits off the sidebar
+ * divider rather than against it. It is also the margin of error: a terminal that
+ * disagrees with Rich about a glyph's width has somewhere to put the second cell
+ * without pushing anything past the row. `✕` is U+2715, which is Neutral width and
+ * therefore one cell everywhere — the enclosed `ⓧ` (U+24E7) this started as is East
+ * Asian *Ambiguous*, and a terminal set to draw ambiguous glyphs double-wide would
+ * have needed that spare column rather than merely having it.
+ *
+ * `$rx-bg-surface-alt` is the faint fill, and it is deliberately the same colour the
+ * box itself takes on focus: while the reader is typing, the chip merges into the
+ * field and the glyph is left carrying itself. That is the state a control least needs
+ * advertising in — the box is already lit, and whoever is typing in it knows it is
+ * there.
+ *
+ * The glyph is `$rx-text-secondary` rather than RxOnly's `--color-text-muted`, and the
+ * chip is why: muted on this fill is 1.84:1 in the dark palette, which is a mark you
+ * cannot find. RxOnly's button is transparent until hovered, so its muted glyph sits
+ * on the field and reads fine there. Secondary manages 9.17:1 dark and 3.45:1 light on
+ * the chip, and is this stylesheet's colour for chrome that labels without shouting.
+ *
+ * The colours are `link-*` because the glyph is a span carrying a `@click` — see
+ * `action_clear_node_filter` — and those are the properties Textual consults for one.
+ * The hover pair is the one every other clickable thing here uses (`#breadcrumbs`,
+ * `#detail`, `#device-bar`), and hover is the only thing a terminal has to say a mark
+ * is a control before it is pressed.
+ */
+
+#node-filter-clear {
+  display: none;
+  width: 2;
+  height: 1;
+  padding: 0 1 0 0;
+  background: $rx-bg-surface-alt;
+  link-color: $rx-text-secondary;
+  link-style: none;
+  link-color-hover: $rx-on-accent;
+  link-background-hover: $rx-link;
+  link-style-hover: none;
+}
+
+#node-filter-clear.visible {
+  display: block;
 }
 
 #node-filter:focus {

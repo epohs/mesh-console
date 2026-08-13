@@ -410,6 +410,39 @@ ChannelItem.unread {
  * *and* the cursor *and* striped needs to say all three.
  */
 
+/* **The full cursor bar and dark text on it, which is Jason's and is what he had
+ * already seen.** This was `$block-cursor-blurred-background` and set no colour at
+ * all, so the row kept whichever accent its list gives — and the blurred background
+ * is `$primary 30%`, a dark slate over the surface. Clicking a row therefore showed
+ * dark text on the *full* blue for as long as the list still had focus (the `:focus`
+ * rule below, which is the readable one) and then dropped to the tint with its accent
+ * text back the moment focus left for the pane it had opened. That flash is the whole
+ * of what "it loses the black text" was.
+ *
+ * **Black could not simply be added to the tint**, which is the obvious version of
+ * this and is unreadable: `$rx-on-accent` on the blurred bar is 1.71:1 dark. The bar
+ * had to become the light one for dark text to be possible on it at all — see the
+ * note under the `:focus` rule below, which has said exactly this about the tint since
+ * before there was a `current` class to apply it to.
+ *
+ * What that buys, measured on the blurred bar it replaces and then on this one:
+ * the channel red went 2.11:1 → 8.33:1 in the dark palette, the node yellow
+ * 1.29:1 → 8.33:1 in the light one, and the second line of a node row — the worst of
+ * them, and the reason `.node-last-seen` needs its own rule below — 1.4:1 → 8.33:1.
+ * One value in both themes, because the background under it is one value in both:
+ * `$block-cursor-background` is `$primary`, which is `$rx-link`, which rxonly.css
+ * defines identically in its two theme blocks. See the note on `rx-on-accent` in
+ * theme.py, which worked this out for the cursor and is why the colour exists.
+ *
+ * **The cost is that a focused list now paints its cursor and its current row the
+ * same**, where the tint used to tell them apart. Two marks, one appearance, on the
+ * two rows — which is a real loss and the narrower one: the tint was telling them
+ * apart in a state where the reader is looking at the list, and it was doing it by
+ * being too dark to read in every state. RxOnly separates the same two facts with an
+ * underline on `.node-link.active`, which is a column-free mark this could take up if
+ * the collision turns out to matter.
+ */
+
 #channels > ChannelItem.current,
 #nodes > NodeItem.current,
 #channels > ChannelItem.-highlight.current,
@@ -418,7 +451,8 @@ ChannelItem.unread {
 #nodes > NodeItem.-highlight.stripe.current,
 #channels > ChannelItem.stripe.current,
 #nodes > NodeItem.stripe.current {
-  background: $block-cursor-blurred-background;
+  background: $block-cursor-background;
+  color: $rx-on-accent;
 }
 
 
@@ -433,6 +467,58 @@ ChannelItem.unread {
 #nodes:focus > NodeItem.-highlight {
   background: $block-cursor-background;
   color: $rx-on-accent;
+}
+
+/* And the second line of a node row again, on both of the marks that light one.
+ *
+ * **A colour on the row does not reach it**, which is why this rule has to exist and
+ * is the other half of what "including the name and the date" was asking for. Textual
+ * does hand a widget's colour down to its children — that is how a block cursor
+ * recolours the labels inside it — but only where the child has not been given one of
+ * its own, and `#nodes > NodeItem .node-last-seen` gives this one `$rx-text-muted`
+ * outright. So the name above it turned dark and the timestamp stayed a dim teal.
+ *
+ * It was the least legible thing on either mark and had been on the cursor all along:
+ * muted on the full bar is 3.47:1 in the dark palette and **1.18:1 in the light one**,
+ * where the two colours very nearly meet. Both marks are named here rather than only
+ * the new one, because the fault is the same fault and fixing half of it would have
+ * left the reader's own cursor row as the illegible case.
+ *
+ * The two lines are the same colour on a lit row, so the name and the timestamp stop
+ * being told apart by dimness there. Position still tells them apart — the name is
+ * above — and that is the trade a one-colour row makes.
+ */
+
+#nodes > NodeItem.current .node-last-seen,
+#nodes:focus > NodeItem.-highlight .node-last-seen {
+  color: $rx-on-accent;
+}
+
+/* The box and the mark that empties it, side by side on one row.
+ *
+ * **A container rather than the bare `Input` this was**, because the glyph has to sit
+ * at the box's right-hand edge and Textual has no way to lay one thing over another
+ * within a row. RxOnly gets it there with `position: absolute` inside a flex
+ * `.nodes-search-reveal`, and reserves the room for it as the input's own
+ * `padding-right: calc(var(--space-sm) + 1.25rem)` — so the text is stopped by the
+ * padding before it reaches the button rather than passing under it. Two siblings
+ * arrive in the same place: the box takes `1fr` and the mark a fixed two columns, so
+ * what is typed stops where the mark starts. **The clipping is the layout**, not a
+ * second mechanism laid on top of it.
+ *
+ * The row owns the blank line under the pair, and it has to: a `margin-bottom` left on
+ * the box would now be a margin *inside* the row, and the line would come out of the
+ * row's own single height instead of out of the sidebar. Same one line, one level
+ * further out.
+ *
+ * **The row is as wide as the lists above and below it**, which is what keeps the note
+ * on `#node-filter`'s padding true: nothing in this pair is a horizontal margin, so
+ * the node list is still given every column it was.
+ */
+
+#node-filter-row {
+  height: 1;
+  margin: 0 0 1 0;
 }
 
 /* Filters the list below it, and looks like it does. Borderless, because a

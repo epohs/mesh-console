@@ -90,8 +90,8 @@ def format_sender(message: dict[str, Any]) -> str:
 
 
 # The parts of a message's top row, separated the way the sidebar separates a
-# channel's counts from its note.
-NOTE_SEPARATOR = "  ·  "
+# channel's counts from its note — one space either side, as the sidebar has it.
+NOTE_SEPARATOR = " · "
 
 # What marks a message of this device's own **when the colour marking it cannot be
 # seen**, and only then. Jason's, and it is the third answer here: the row carried

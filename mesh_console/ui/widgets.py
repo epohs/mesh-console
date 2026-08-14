@@ -213,8 +213,9 @@ class Breadcrumbs(Static):
 
   COMPONENT_CLASSES = {"breadcrumbs--separator"}
 
-  # RxOnly's `.breadcrumbs li:not(:last-child)::after` content, with room around it.
-  SEPARATOR = "  ›  "
+  # RxOnly's `.breadcrumbs li:not(:last-child)::after` content, with one space of
+  # room on either side — the same breathing the sidebar's ` · ` gets, and no more.
+  SEPARATOR = " › "
 
 
   def set_trail(self, *crumbs: "str | Crumb") -> None:
@@ -498,7 +499,7 @@ class ConversationItem(ListItem):
     self.unread = unread
 
     self._title = Label(
-      f"{local_label}  ›  {self._peer_label()}", markup=False, classes="conversation-peer"
+      f"{local_label} › {self._peer_label()}", markup=False, classes="conversation-peer"
     )
     self._summary = Label("", markup=False, classes="conversation-summary")
 
@@ -528,9 +529,9 @@ class ConversationItem(ListItem):
   def _apply_summary(self) -> None:
     count = self.conversation.get("message_count") or 0
     summary = f"{format_time_short(self.conversation.get('newest_rx_time'))}"
-    summary += f"  ·  {count} message{'s' if count != 1 else ''}"
+    summary += f" · {count} message{'s' if count != 1 else ''}"
     if self.unread:
-      summary += f"  ·  {self.unread} unread"
+      summary += f" · {self.unread} unread"
     self._summary.update(summary)
 
 
@@ -572,7 +573,7 @@ class ConversationItem(ListItem):
 
     # Said even when nothing else has, because the other half of the line is
     # `local_label`, which this row does not keep and cannot compare against.
-    self._title.update(f"{local_label}  ›  {self._peer_label()}")
+    self._title.update(f"{local_label} › {self._peer_label()}")
 
     if unchanged:
       return

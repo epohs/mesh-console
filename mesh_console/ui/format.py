@@ -507,49 +507,37 @@ def _with_unit(value: Any, unit: str, places: Optional[int] = None) -> Optional[
 
 
 
-def format_age(unix_timestamp: Optional[int], now: Optional[int] = None) -> str:
-  """How long ago that was, coarsely: `4s ago`, `12m ago`, `3h ago`, `2d ago`.
+def format_firmware(version: Optional[str], channel: Optional[str]) -> str:
+  """`2.7.26.54e0d8d` + `beta` becomes `2.7.26 (beta)`; absence becomes `unknown`.
 
-  For the menu's "Updated", where the reader is asking one yes-or-no question —
-  is anything still arriving? — and `1d 4h 12m ago` answers it no better than
-  `1d ago` while taking three times the room. So this is the coarsest unit that
-  fits and nothing below it, which is the opposite of `format_uptime`'s choice
-  and correct for the opposite reason: an uptime is a quantity someone reads, an
-  age is a quantity someone glances at.
+  For the menu's "Firmware", which answers "what is this radio running" at a
+  glance. The device names its build version-then-commit-hash, and the hash is
+  dropped here: it identifies a build to somebody with the firmware repo open,
+  which is not who is reading a menu, and `2.7.26` is the part a person can
+  compare against the releases page. Dropped by this reader at render time
+  rather than by the collector at write time, so the archive keeps the whole
+  string the device actually said.
 
-  `now` is a parameter so this can be tested without waiting, and defaults to the
-  clock. Both sides are unix seconds in the archive's own terms.
+  The channel rides in a second argument because **the device does not know its
+  own channel**: firmware reports its version and nothing about whether that
+  build shipped as a Beta or an Alpha. The collector looks that up in
+  Meshtastic's release listing at startup and publishes it beside the version,
+  so an empty channel here means "the collector could not say" — offline, an
+  unlisted build — and the version stands untagged rather than guessed at.
 
-  **A clock that disagrees with the collector's reads as the future**, which is not
-  hypothetical between a laptop and a Pi: a timestamp ahead of `now` gives a
-  negative age, and `-3s ago` would look like a bug in this console rather than
-  like the clock skew it is. Such an age is reported as `just now` — the only
-  honest reading of "newer than I think the present is" that does not accuse
-  anybody of anything.
-
-  An archive with no messages at all returns `never`, which is a real state on a
-  console opened against a collector that has just started.
+  `unknown` covers an archive written before these keys existed (schema 0.11.0),
+  a collector that has not restarted since gaining them, and a dropped
+  connection alike — which is everything this process actually knows in any of
+  those moments.
   """
-  if unix_timestamp is None:
-    return "never"
+  if not version:
+    return "unknown"
 
-  try:
-    then = int(unix_timestamp)
-  except (TypeError, ValueError):
-    return "never"
+  trimmed = ".".join(version.split(".")[:3])
 
-  current = int(datetime.now().timestamp()) if now is None else int(now)
-  elapsed = current - then
-
-  if elapsed < 0:
-    return "just now"
-  if elapsed < 60:
-    return f"{elapsed}s ago"
-  if elapsed < 3600:
-    return f"{elapsed // 60}m ago"
-  if elapsed < 86400:
-    return f"{elapsed // 3600}h ago"
-  return f"{elapsed // 86400}d ago"
+  if channel:
+    return f"{trimmed} ({channel})"
+  return trimmed
 
 
 

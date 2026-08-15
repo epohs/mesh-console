@@ -50,9 +50,9 @@ class MenuScreen(ModalScreen[Optional[str]]):
   **The header above the rule is facts about the program**, and the only surface
   in this interface that carries any: everything else here is about the mesh. It
   arrives the same way the entries do and for the same reason — the version, the
-  archive's schema, how long since anything was heard and whether sending is set
-  up are all the app's to know, and a screen that read them itself would be a
-  modal that cannot be mounted on its own. `title` is the same bargain.
+  archive's schema, the radio's firmware and whether sending is set up are all
+  the app's to know, and a screen that read them itself would be a modal that
+  cannot be mounted on its own. `title` is the same bargain.
 
   Header rows are `Label`s and not `MenuItem`s, which matters: a fact inside
   `#menu-list` would be a `ListItem`, and therefore highlightable, arrow-key

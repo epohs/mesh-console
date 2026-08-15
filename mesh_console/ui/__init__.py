@@ -52,10 +52,10 @@ from mesh_console.state import (
   ReadPositions,
 )
 from mesh_console.ui.format import (
-  format_age,
   format_channel_label,
   format_coordinates,
   format_device_name,
+  format_firmware,
   format_message_detail,
   format_node_detail,
   format_node_display_name,
@@ -3606,14 +3606,16 @@ class MeshConsoleApp(App):
   def menu_facts(self) -> tuple[tuple[str, str], ...]:
     """The four lines above the rule: what this program is and what it is reading.
 
-    Read at open rather than kept current, which is the right trade for a modal that
-    is on screen for a second or two — and the reason `Updated` is worth having at
-    all is that it is a *snapshot*: a reader who wants a newer one closes the menu
-    and opens it again, or presses `r`.
+    Read at open rather than kept current, which is the right trade for a modal
+    that is on screen for a second or two — and an easy one now that every fact
+    here changes on the collector's schedule rather than the mesh's: firmware
+    moves when the device is reflashed and the collector restarts, which is
+    never while this menu is up.
 
-    Every line survives an unreadable archive, because `self.read` answers None and
-    the menu has to open regardless. A dropped connection reports `unknown` schema
-    and `never` updated, which is what this process actually knows at that moment.
+    Every line survives an unreadable archive, because `self.read` answers None
+    and the menu has to open regardless. A dropped connection reports `unknown`
+    schema and `unknown` firmware, which is what this process actually knows at
+    that moment.
     """
     # The file, not the path. The path is long, often absolute, and identifies the
     # host rather than the archive; the basename is what distinguishes two archives
@@ -3628,10 +3630,25 @@ class MeshConsoleApp(App):
     # 0.10.0 is reading a schema with columns it knows nothing about.
     schema = self.read(db.get_meta, "schema_version") or "unknown"
 
+    # Two reads and one line: the version is the device's own claim, recorded by
+    # the collector at its last startup; the channel is the collector's lookup
+    # against Meshtastic's release listing, because the device does not know its
+    # own channel. Either read failing leaves something true to print — see
+    # format_firmware for what each absence means.
+    #
+    # This line replaced "Updated" (how long since anything arrived), and the
+    # trade is real: the menu no longer answers "is this archive still being
+    # written?" anywhere. Jason's call, 2026-08-15 — the firmware of the radio
+    # he is physically flashing is the fact he was opening this menu for.
+    firmware = format_firmware(
+      self.read(db.get_meta, "firmware_version"),
+      self.read(db.get_meta, "firmware_channel"),
+    )
+
     return (
       ("Archive", archive),
       ("Schema", f"{schema} · reads {REQUIRED_SCHEMA}+"),
-      ("Updated", format_age(self.read(db.fetch_latest_rx_time))),
+      ("Firmware", firmware),
       ("Sending", self.send_state),
     )
 

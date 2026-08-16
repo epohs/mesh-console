@@ -70,6 +70,7 @@ from mesh_console.ui.tapbacks import is_emoji_only
 from mesh_console.ui.theme import (
   DEFAULT_THEME, RXONLY_DARK, RXONLY_LIGHT, THEMES, palette_for,
 )
+from mesh_console.ui.viewport import RowSpan, read_margin, read_through
 from mesh_console.ui.widgets import (
   Breadcrumbs,
   ChannelItem,
@@ -167,21 +168,6 @@ NODE_SCROLL_TRIGGER_LINES = 6
 # loaded window `scroll_y` is already 0, so walking the selection up onto the first
 # row moves no pixels and would fetch nothing.
 MESSAGE_SCROLL_TRIGGER_LINES = 6
-
-# **Where the read line sits: this far up from the bottom of the message pane.**
-#
-# Jason's, and the rule it replaces was the cursor — a message was read when the
-# cursor had been on or past it. Reading is now what RxOnly means by it: a message
-# is read when the viewport has carried it far enough up the pane. Far enough is a
-# fifth of the pane, so the bottom two messages or so of a scrolling channel are
-# not claimed as read while they are still at the edge of vision.
-#
-# The floor matters more than the fraction. A fifth of a 40-line pane is 8 lines,
-# about two messages, which is the intent; a fifth of a 12-line pane is 2 lines,
-# less than one message, and the bottom message would count as read the moment it
-# was fully on screen. Four lines is a message and its gap.
-READ_MARGIN_FRACTION = 0.2
-READ_MARGIN_MIN_LINES = 4
 
 # How long the node filter waits after a keystroke before it queries. Matches
 # search_debounce_delay in RxOnly's rxonly.js, in seconds rather than
@@ -4600,13 +4586,6 @@ class MeshConsoleApp(App):
 
 
 
-  def read_margin(self, height: int) -> int:
-    """How far up from the bottom of the pane the read line sits, in lines."""
-    return max(READ_MARGIN_MIN_LINES, int(height * READ_MARGIN_FRACTION))
-
-
-
-
   def mark_read_from_viewport(self) -> None:
     """Record that everything the viewport has carried above the read line is read.
 
@@ -4617,11 +4596,8 @@ class MeshConsoleApp(App):
     saying what you have seen — and a reader who scrolls rather than walks was doing
     neither. Read is now what it is in the browser: scrolled far enough up the pane.
 
-    Far enough is `read_margin` lines from the bottom, so the last message or two of
-    a channel that is still scrolling are not claimed while they sit at the edge of
-    vision. A row counts when its **top** clears the line — a message is several
-    lines tall, and waiting for its last line would leave a long message unread
-    while the reader was already past it.
+    How far is far enough, and which rows have got there, are `ui/viewport.py`'s:
+    everything below this measures the pane and then records what came back.
 
     The two carve-overs from the cursor version both survive, because neither was
     about the cursor:
@@ -4649,58 +4625,30 @@ class MeshConsoleApp(App):
     if not height:
       return
 
-    # **Only a settled list can be read.** Between a window changing and the redraw
-    # finishing, the rendered rows disagree with `self.rows` in count; between the
-    # redraw and the next layout pass, every row reports its `virtual_region` at
-    # y=0. Measured in either state, the arithmetic below claims the whole window:
-    # rows all at zero are all "above the read line", and a `max_scroll_y` of
-    # nothing makes anywhere "the bottom of a fully loaded channel". `positioning`
-    # guards exactly one of the windows where that happened — opening a channel —
-    # but a page arriving rebuilds the same list with no flag up, and a scroll
-    # event landing in that gap marked messages read that nobody had seen. The
-    # guard belongs here, where the measuring is, so no caller has to know.
-    rows_on_screen = self.message_rows()
-    if len(rows_on_screen) != len(self.rows):
-      return
-    if len(rows_on_screen) > 1 and all(
-      row.virtual_region.y == 0 for row in rows_on_screen
-    ):
-      return
-
-    # **The last message being on screen is the end, not the scrollbar being at its
-    # stop.** Those were the same thing until the pane could be scrolled past its
-    # content: `scroll_y >= max_scroll_y` now means "into the blank lines below the
-    # channel", and reading it that way would have made the four lines compulsory —
-    # a reader who scrolled until the newest message was fully visible and stopped
-    # there, which is every reader, would have been left holding the unread count
-    # this branch exists to clear. So the question is asked about the message.
-    #
-    # Its *bottom*, unlike the read line's rule for rows in the middle of the list,
-    # because there is nothing below it to go on to: a long final message whose top
-    # has cleared the read line but whose last lines have not been on screen has not
-    # been read, and there is no next scroll coming to finish it.
-    at_the_end = not self.has_more_newer and (
-      rows_on_screen[-1].virtual_region.bottom
-      <= messages_view.scroll_offset.y + height
+    # The measuring, and the last of it: every rule about what these numbers mean
+    # is `read_through`'s, including the two guards against measuring a list that
+    # is mid-redraw or not yet laid out. Those are questions about the geometry
+    # rather than about the widget, and `row_count` is what puts the first of them
+    # in reach — the App's own count of the rows this list should be drawing.
+    spans = [
+      RowSpan(row.virtual_region.y, row.virtual_region.bottom)
+      for row in self.message_rows()
+    ]
+    reached = read_through(
+      spans,
+      row_count=len(self.rows),
+      height=height,
+      scroll_y=messages_view.scroll_offset.y,
+      has_more_newer=self.has_more_newer,
     )
+    if reached is None:
+      return
 
-    if at_the_end and self.messages:
+    if reached.at_the_end and self.messages:
       marker = max(self.messages, key=db.cursor_of)
-      self.set_read_row(len(self.rows) - 1)
+      self.set_read_row(reached.index)
     else:
-      # Measured in the scrollable content's own coordinates, which is what
-      # `virtual_region` is and what makes this independent of where the list
-      # happens to be on screen.
-      line = messages_view.scroll_offset.y + height - self.read_margin(height)
-
-      read = [
-        index for index, item in enumerate(rows_on_screen)
-        if item.virtual_region.y <= line
-      ]
-      if not read:
-        return
-
-      marker = self.rows[read[-1]]["message"]
+      marker = self.rows[reached.index]["message"]
 
     scope, key = self.current_scope()
     moved = self.positions.set(
@@ -4719,7 +4667,7 @@ class MeshConsoleApp(App):
     # says the read line is over row six again, and `ReadPositions` — which refuses
     # to move backwards — still says row thirteen, correctly, because scrolling back
     # over something does not unread it. Taking the row from the position rather than
-    # from `read` is also what survives a page arriving, since prepending shifts
+    # from `reached` is also what survives a page arriving, since prepending shifts
     # every index and a message id is the one name that does not move.
     position = self.positions.get(scope, key)
     if position:
@@ -4926,7 +4874,7 @@ class MeshConsoleApp(App):
       if index < 0 or index >= len(rows):
         return
 
-      target = rows[index].virtual_region.y - (height - self.read_margin(height))
+      target = rows[index].virtual_region.y - (height - read_margin(height))
 
       # **An unread message below the fold is the bug this whole change is about,
       # and it is not only fully-read channels that had it.** The resume row goes on

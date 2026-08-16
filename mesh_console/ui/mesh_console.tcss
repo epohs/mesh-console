@@ -1329,6 +1329,17 @@ LogViewerScreen {
  * is a real overlap and a tolerable one: both are saying "this names who", and
  * they never occupy the same column — a tag is the marker at the head of a line
  * and an id is in the prose after it.
+ *
+ * `--self` is the one word the collector uses for the device it is plugged into —
+ * `Self !eeb826a4 updated:`, the tidy log's grouped entry — and it takes
+ * `$rx-link`, the colour of the double frame around the whole viewer. That is the
+ * colour INFO was moved *off*, above, and this is not the same clash coming back:
+ * INFO was a marker on half the lines in the pane, a column of frame-colour
+ * running inside the frame, where this is four cells on a line that arrives a few
+ * times an hour. Borrowing the frame's colour is the point rather than an
+ * accident. The frame says "this surface is the collector's own", and Self is the
+ * collector talking about its own radio — the id beside it keeps the node yellow,
+ * so the pair reads as "this one, ours".
  */
 
 #log-stream > .log-stream--time     { color: $rx-text-muted; }
@@ -1338,6 +1349,7 @@ LogViewerScreen {
 #log-stream > .log-stream--error    { color: $rx-error; }
 #log-stream > .log-stream--critical { color: $rx-error; text-style: bold; }
 #log-stream > .log-stream--tag      { color: $rx-accent-node; }
+#log-stream > .log-stream--self     { color: $rx-link; }
 #log-stream > .log-stream--node     { color: $rx-accent-node; }
 
 /* The log viewer's own two footer entries.

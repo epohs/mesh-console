@@ -1059,6 +1059,7 @@ class LogStream(Log):
     "log-stream--critical",
     "log-stream--tag",
     "log-stream--node",
+    "log-stream--self",
   }
 
   PREFIX = "log-stream--"

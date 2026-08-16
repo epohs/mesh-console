@@ -195,6 +195,18 @@ _STAMPED_MARKER = re.compile(r"[ ]+(\[[^\[\]\s]+\])[ ]+(?=\S)")
 # what catches all three and whatever the library prints next.
 NODE_ID = re.compile(r"(?<![0-9A-Za-z])!([0-9a-fA-F]{8})(?![0-9A-Za-z])")
 
+# The collector's line about the device it is plugged into: `Self !eeb826a4
+# updated: rssi -87`, written by the tidy log's grouping (mesh-collector's
+# selflog.py) once per TIDY_LOG_LOCAL_NODE_PERIOD. Only the word is claimed —
+# the id after it is the node run above, painted by the same loop that paints
+# every other id. The lookahead is what keeps this honest: `Self` must be
+# followed by a node id, so a message that merely opens with the word — someone
+# logging "Self test passed", say — is message and stays the message's colour.
+# Matched at the start of the message only (see `_mark`), which is the one
+# position the collector writes it in; a `Self !hex` in the middle of somebody's
+# prose is quoting, not reporting.
+SELF_MARK = re.compile(r"Self (?=![0-9a-fA-F]{8}(?![0-9A-Za-z]))")
+
 
 
 
@@ -566,7 +578,8 @@ def _cut(word: str, cells: int) -> tuple[str, str]:
 
 
 class LogHighlighter(Highlighter):
-  """Colours the timestamp, the level marker and any node id, and leaves the rest alone.
+  """Colours the timestamp, the level marker, any node id and the collector's
+  `Self` mark, and leaves the rest alone.
 
   A `Log` keeps its content as plain strings and calls this on each line as it
   renders it, which is why this is a highlighter rather than something that built
@@ -627,6 +640,17 @@ class LogHighlighter(Highlighter):
     # same job, and leaving it the colour of the message would read as the
     # message starting with a bracket.
     self._paint(text, name.lower() if name in LEVELS else "tag", tag.start(), tag.end())
+
+    # The one word of a message this paints: `Self`, when it opens the message
+    # and a node id follows — the collector reporting on its own radio. Anchored
+    # past the marker's padding the same way `message_indent` finds the message
+    # column, so a `Self` anywhere later in the line is left alone. Four
+    # characters, not the match — `SELF_MARK` claims the joining space to insist
+    # on the id, and the space is not part of the word.
+    spacing = re.compile(r"\s*").match(plain, tag.end())
+    start = spacing.end() if spacing else tag.end()
+    if SELF_MARK.match(plain, start):
+      self._paint(text, "self", start, start + len("Self"))
 
 
   def _paint(self, text: Text, key: str, start: int, end: int) -> None:

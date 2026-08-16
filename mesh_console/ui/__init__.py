@@ -3477,7 +3477,36 @@ class MeshConsoleApp(App):
 
 
   async def load_newer(self) -> None:
-    """Append the next page toward the live end of the channel."""
+    """Append the next page toward the live end of the channel.
+
+    **The read marker is re-measured afterwards, because a page arriving here can
+    move what "the end" is without moving anything on screen.** A reaction in the
+    arriving page attaches to a message already on the list rather than becoming a
+    row of its own, so the pane does not grow, nothing scrolls, and none of the
+    events that drive `mark_read_from_viewport` fire — while the archive's newest
+    message is now one the stored position sits behind.
+
+    Nothing could clear that afterwards either, and that is what made it a stuck
+    count rather than a late one. Reading is scrolling now, and a reader already at
+    the bottom of a fully loaded channel has nowhere left to scroll; the reaction
+    has no row to walk the cursor onto, because it was absorbed into one. So a `🎉`
+    from anybody else on the newest message left the channel showing one unread with
+    the last message of it on screen and read — Jason's report, and the exact state
+    the bottom-of-a-fully-loaded-channel branch of `mark_read_from_viewport` exists
+    to prevent. It was never reached because nothing asked it.
+
+    In the `finally` so every exit re-measures, including the two that change what
+    the end means without appending anything: an empty page lowers `has_more_newer`,
+    which is the other half of that branch's test. It is safe to ask on the paths
+    where nothing moved — `ReadPositions.set` only ever moves a marker forward, so a
+    re-measure that computes an older row than the stored one records nothing.
+
+    `call_after_refresh` rather than a direct call, for the reason the guards inside
+    `mark_read_from_viewport` are there at all: a row that has just absorbed a
+    reaction is a line taller than the layout that measured it, and reading its
+    `virtual_region` before the next pass measures the channel as it was one line
+    ago. Deferring by a refresh is how the rest of this app waits for geometry.
+    """
     if self.is_loading or not self.has_more_newer or self.newest_cursor is None:
       return
     # Same stand-down as `load_older`, same reason.
@@ -3523,6 +3552,7 @@ class MeshConsoleApp(App):
     finally:
       self.is_loading = False
       self.update_message_status()
+      self.call_after_refresh(self.mark_read_from_viewport)
 
 
 

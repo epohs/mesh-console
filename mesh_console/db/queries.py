@@ -526,8 +526,9 @@ def fetch_message_page(
   has_more checks below compare, which is the point: the query that finds the
   next page and the query that reports whether one exists now agree.
 
-  RxOnly's `/api/messages` still takes a bare `before_rx_time`, so it has this
-  bug. It is not this project's to fix — see the handoff.
+  RxOnly's two message endpoints took a bare `before_rx_time` and had this bug;
+  they take the pair now, and keep the bare form working by resolving it against
+  the archive. The two projects agree again.
 
   **`peer` narrows a direct message page to one conversation**, and is what makes
   a compose box addressable: the recipient is a property of the page rather than of

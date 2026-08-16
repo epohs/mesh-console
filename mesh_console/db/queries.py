@@ -142,8 +142,8 @@ def _drawn_rows(table: str, alias: str) -> str:
   **`IS 1` and not `= 1`, and the difference is not style.** `NULL = 1` is NULL, so
   `NOT (TRUE AND NULL AND TRUE)` is NULL, and a NULL in a WHERE or an ON is not true
   — which drops the row. Spelled `= 1` this condition therefore excluded *every*
-  pre-0.10.0 reply whose parent is still archived, ordinary ones included, and
-  undercounted by 23 rows against the live archive. `IS` is SQLite's null-safe
+  pre-0.10.0 reply whose parent is still archived, ordinary ones included: on the
+  live archive at the time, 125 rows counted where 144 are drawn. `IS` is null-safe
   comparison and gives NULL the answer the fallback needs: not a recorded 1, so
   drawn. It is the same distinction Python's `is not None` draws in `is_tapback`
   one line above its `== 1`.

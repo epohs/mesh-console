@@ -51,7 +51,9 @@ class Window(NamedTuple):
   `rebuild_rows()`'s job, and happens after this value has been assigned.
 
   A cursor is None only when the page came back empty, which is an empty channel:
-  there is no message to take an `(rx_time, id)` pair from.
+  there is no message to take an `(rx_time, id)` pair from. Only
+  `fetch_edge_window` can produce that — a window built around an anchor always
+  has the anchor in it, so it always has a pair to hand back.
   """
 
   messages: list[dict[str, Any]]
@@ -119,5 +121,88 @@ def fetch_edge_window(
     has_more_newer=page["meta"]["has_more_newer"],
     oldest_cursor=page["meta"]["oldest"],
     newest_cursor=page["meta"]["newest"],
+    resume_message_id=resume_message_id,
+  )
+
+
+
+
+def fetch_window_around(
+  read: Callable[..., Any],
+  message_id: int,
+  *,
+  is_dm: bool,
+  channel_index: Optional[int],
+  peer: Optional[str],
+  limit: int,
+) -> Optional[Window]:
+  """One page either side of a named message, with that message in the middle.
+
+  What resuming has always done, with the message named directly rather than
+  taken out of a stored position — because there is now a second way to arrive
+  somewhere specific: pressing enter on a row of the flat direct message list,
+  which lands in that peer's conversation on that message.
+
+  None when the message is not in the archive, which for a resume is the
+  collector having pruned past it. The caller falls back to a fresh load.
+
+  **A failed read answers None as well, and nothing here tells the two apart.**
+  `read` returns None when SQLite raised, so an absent anchor and an unreachable
+  archive arrive at the same check, and the two page reads after it can fail the
+  same way. Four causes, one return value, one fallback. `fetch_edge_window`
+  does draw the distinction, because there None-versus-empty separates an
+  unreachable archive from a channel nobody has posted in; here every road ends
+  at a fresh load.
+
+  **An empty page either side stands in the anchor's own cursor.** A message
+  with nothing older than it is the first one in the channel, which is ordinary:
+  the page comes back with `meta.oldest` of None, and the place to page from
+  next is still real — it is the anchor. `fetch_edge_window` needs no
+  equivalent, because an empty page there means an empty channel.
+
+  The scope arguments mirror `db.fetch_message_page`'s own, keyword-only past
+  `message_id` for that function's stated reason: a node id must never land in
+  `channel_index` by being passed one position early.
+  """
+  anchor = read(db.fetch_message, message_id, is_dm)
+  if anchor is None:
+    return None
+
+  cursor = db.cursor_of(anchor)
+
+  older = read(
+    db.fetch_message_page,
+    is_dm,
+    channel_index,
+    peer=peer,
+    before=cursor,
+    limit=limit,
+  )
+  newer = read(
+    db.fetch_message_page,
+    is_dm,
+    channel_index,
+    peer=peer,
+    after=cursor,
+    limit=limit,
+  )
+
+  if older is None or newer is None:
+    return None
+
+  messages = older["messages"] + [anchor] + newer["messages"]
+
+  # The anchor message, by id rather than by position. `rebuild_rows()`
+  # turns that into a row index — and if it has since
+  # become a tapback absorbed into another row, it resolves to the row holding
+  # it, so a position recorded before this slice still resumes somewhere real.
+  resume_message_id = anchor["message_id"]
+
+  return Window(
+    messages=messages,
+    has_more_older=older["meta"]["has_more_older"],
+    has_more_newer=newer["meta"]["has_more_newer"],
+    oldest_cursor=older["meta"]["oldest"] or cursor,
+    newest_cursor=newer["meta"]["newest"] or cursor,
     resume_message_id=resume_message_id,
   )

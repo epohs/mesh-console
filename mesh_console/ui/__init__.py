@@ -84,7 +84,7 @@ from mesh_console.ui.widgets import (
   reconcile,
   striped,
 )
-from mesh_console.window import fetch_edge_window
+from mesh_console.window import Window, fetch_edge_window, fetch_window_around
 
 
 # mesh-link is an optional dependency, so this import is the install answering
@@ -3040,53 +3040,24 @@ class MeshConsoleApp(App):
 
 
   def load_window_around(self, message_id: int) -> Optional[list[dict[str, Any]]]:
-    """One page either side of a named message, with that message in the middle.
+    """Load the page either side of a message and adopt it as the open window.
 
-    What resuming has always done, with the message named directly rather than
-    taken out of a stored position — because there is now a second way to arrive
-    somewhere specific: pressing enter on a row of the flat direct message list,
-    which lands in that peer's conversation on that message.
-
-    None when the message is not in the archive, which for a resume is the
-    collector having pruned past it. The caller falls back to a fresh load.
+    The three reads and the edge arithmetic are in `window.py`, along with the
+    account of what None means here — an anchor the collector has pruned past
+    and an unreachable archive both land on the caller's fresh load.
     """
-    anchor = self.read(db.fetch_message, message_id, self.current_is_dm)
-    if anchor is None:
-      return None
-
-    cursor = db.cursor_of(anchor)
-
-    older = self.read(
-      db.fetch_message_page,
-      self.current_is_dm,
-      self.current_channel_index,
+    window = fetch_window_around(
+      self.read,
+      message_id,
+      is_dm=self.current_is_dm,
+      channel_index=self.current_channel_index,
       peer=self.current_peer,
-      before=cursor,
       limit=self.page_size,
     )
-    newer = self.read(
-      db.fetch_message_page,
-      self.current_is_dm,
-      self.current_channel_index,
-      peer=self.current_peer,
-      after=cursor,
-      limit=self.page_size,
-    )
-
-    if older is None or newer is None:
+    if window is None:
       return None
 
-    self.messages = older["messages"] + [anchor] + newer["messages"]
-    self.has_more_older = older["meta"]["has_more_older"]
-    self.has_more_newer = newer["meta"]["has_more_newer"]
-    self.oldest_cursor = older["meta"]["oldest"] or cursor
-    self.newest_cursor = newer["meta"]["newest"] or cursor
-
-    # The anchor message, by id rather than by position. `rebuild_rows()`
-    # turns that into a row index — and if it has since
-    # become a tapback absorbed into another row, it resolves to the row holding
-    # it, so a position recorded before this slice still resumes somewhere real.
-    self.resume_message_id = anchor["message_id"]
+    self.apply_window(window)
     self.rebuild_rows()
 
     return self.messages
@@ -3112,8 +3083,8 @@ class MeshConsoleApp(App):
     """Load one edge of the channel and adopt it as the open window.
 
     The fetch and the edge arithmetic are in `window.py`, which needs nothing
-    from the App but `read` and the scope. What stays here is adopting the six
-    fields it produces, and the row rebuild, which is the App's.
+    from the App but `read` and the scope. What stays here is the two steps that
+    are the App's: adopting the six fields it produces, and the row rebuild.
     """
     window = fetch_edge_window(
       self.read,
@@ -3126,16 +3097,33 @@ class MeshConsoleApp(App):
     if window is None:
       return None
 
+    self.apply_window(window)
+    self.rebuild_rows()
+
+    return self.messages
+
+
+
+
+  def apply_window(self, window: Window) -> None:
+    """Adopt a fetched window as the open one: six fields, no rebuild.
+
+    The four window-edge fields belong to the App — fifteen other methods read
+    them — and `window.py` only produces values to assign from. This is where
+    they land, for both of the functions that produce them, so a seventh field
+    on `Window` is a change to one method rather than to every loader.
+
+    The row rebuild is deliberately not folded in, even though both callers do it
+    on the next line. Deriving rows is a separate step with five call sites of
+    its own, and keeping it visible in each loader is what step 2 settled on when
+    it kept `rebuild_rows()` out of `window.py`.
+    """
     self.messages = window.messages
     self.has_more_older = window.has_more_older
     self.has_more_newer = window.has_more_newer
     self.oldest_cursor = window.oldest_cursor
     self.newest_cursor = window.newest_cursor
     self.resume_message_id = window.resume_message_id
-
-    self.rebuild_rows()
-
-    return self.messages
 
 
 

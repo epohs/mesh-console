@@ -1186,7 +1186,10 @@ class MeshConsoleApp(App):
       # an unexplained empty list.
       stores_dms = self.read(get_meta_bool, "stores_direct_messages")
       note = "" if stores_dms else "not archived"
-      total_dms = stats["stats"]["total_direct_messages"]
+      # The drawn count, not the archive one: this row's number sits next to a list
+      # that folds reactions into pills, and the Network Stats block is where the
+      # archive figure belongs. `fetch_stats` returns both and says why.
+      total_dms = stats["stats"]["drawn_direct_messages"]
       unread_dms = self.unread_direct_count()
 
       item = showing.get((True, None))
@@ -5689,7 +5692,9 @@ class MeshConsoleApp(App):
     when either that happens or this reader moves the cursor.
     """
     channel_counts = stats["stats"]["channel_counts"]
-    total_dms = stats["stats"]["total_direct_messages"]
+    # Whatever `rebuild_sidebar` put there, or the poll would rewrite the row with
+    # a number of a different kind ten seconds later.
+    total_dms = stats["stats"]["drawn_direct_messages"]
 
     unread = self.unread_counts()
     unread_dms = self.unread_direct_count()

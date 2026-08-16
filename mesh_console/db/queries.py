@@ -117,6 +117,77 @@ def _node_where(*conditions: str, list_unnamed: bool = False) -> str:
 
 
 
+def _drawn_rows(table: str, alias: str) -> str:
+  """A condition for "this row becomes a list item", as `rebuild_rows` decides it.
+
+  The counterpart of `_node_where` for messages, and here for the same reason: so a
+  count cannot disagree with the list it counts. The list does not draw one row per
+  archived row — `rebuild_rows` in ui/__init__.py folds a reaction into a pill on
+  the message it answers, and holds one whose parent is in the archive but not yet
+  in the loaded window. **Absorbed and held are the same thing to a count**: neither
+  is ever a row of its own, and the difference between them is which page the reader
+  has walked to, which no SQL can be written against.
+
+  So the sidebar was describing a set the reader cannot reach the end of — the
+  fixture's channel 0 counts 6 and draws 5.
+
+  **`emoji IS 1` only, mirroring `is_tapback`'s first branch.** Rows written before
+  schema 0.10.0 carry `emoji IS NULL`, and for those `is_tapback` falls back to
+  `is_emoji_only`, a grapheme walk over a Unicode range table with no SQL equivalent
+  in this language or in the JavaScript. One legacy reaction can therefore still be
+  counted as a row it will not draw. That set is bounded and never added to — the
+  collector has recorded the flag since 0.10.0 and deliberately never backfills —
+  and RxOnly took the same trade for the same reason.
+
+  **`IS 1` and not `= 1`, and the difference is not style.** `NULL = 1` is NULL, so
+  `NOT (TRUE AND NULL AND TRUE)` is NULL, and a NULL in a WHERE or an ON is not true
+  — which drops the row. Spelled `= 1` this condition therefore excluded *every*
+  pre-0.10.0 reply whose parent is still archived, ordinary ones included, and
+  undercounted by 23 rows against the live archive. `IS` is SQLite's null-safe
+  comparison and gives NULL the answer the fallback needs: not a recorded 1, so
+  drawn. It is the same distinction Python's `is not None` draws in `is_tapback`
+  one line above its `== 1`.
+
+  **What this is not.** RxOnly's `drawn_rows` also keeps a read cue from sticking:
+  its read position is read off `li` elements, so a folded row counted as the newest
+  thing in a channel set a mark no reader could reach. This reader's marker advances
+  by message rather than by row — `rebuild_rows` says so, and
+  test_unread_reactions.py is built on it — so nothing here was ever stuck and there
+  is no equivalent of RxOnly's `get_unread_ceiling` to write. The numbers were
+  simply wrong, and this is only about the numbers.
+
+  The orphan half is expressible exactly. A tapback whose parent is not in the
+  archive at all *is* drawn, as an ordinary row, and that is this EXISTS going
+  false. `reply_to_text IS NULL` is how the display half spells the same test — see
+  `_MESSAGE_COLUMNS`, whose `parent` join is against the whole table rather than
+  against the loaded page.
+
+  **This rule is maintained by hand in three languages**: here, in `is_tapback` in
+  ui/tapbacks.py, and in RxOnly's `drawn_rows` and messages.js. Change one, change
+  the others. They are deliberate reimplementations and not a shared module, which
+  is the arrangement `test_the_two_readers_agree_on_the_schema_helpers` exempts
+  queries from on purpose.
+
+  Returns a bare condition rather than a clause, because its callers need it in
+  three positions: a WHERE, an AND onto an existing WHERE, and a LEFT JOIN's ON.
+  **On the join and not in a WHERE, wherever there is an outer join to hang it on**
+  — a channel whose every row is a folded reaction has to report 0 rather than drop
+  out of the result and leave the caller's `.get(index, 0)` to invent the number.
+
+  `table` and `alias` are literals from the call sites and never arrive from a
+  request, so interpolating them is not an injection vector.
+  """
+  return f"""
+    NOT (
+      {alias}.reply_to IS NOT NULL
+      AND {alias}.emoji IS 1
+      AND EXISTS (SELECT 1 FROM {table} p WHERE p.message_id = {alias}.reply_to)
+    )
+  """
+
+
+
+
 def _message_table(is_dm: bool) -> tuple[str, str]:
   """Return the table name and the extra column list for one kind of message."""
   if is_dm:
@@ -174,12 +245,18 @@ def _scope_clauses(
 
 
 def fetch_channels(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-  """Channels with their message counts, for the sidebar."""
+  """Channels with the number of rows their message list will draw, for the sidebar.
+
+  Every channel is present even when nothing in it is drawn, which is why the
+  predicate is on the join rather than in a WHERE — see `_drawn_rows`.
+  """
   rows = conn.execute(
-    """
+    f"""
     SELECT c.channel_index, c.name, COUNT(m.id) AS message_count
     FROM channels c
-    LEFT JOIN messages m ON c.channel_index = m.channel_index
+    LEFT JOIN messages m
+      ON c.channel_index = m.channel_index
+     AND {_drawn_rows("messages", "m")}
     GROUP BY c.channel_index, c.name
     ORDER BY c.channel_index
     """
@@ -226,6 +303,17 @@ def fetch_stats(
   would make `Nodes (84)` name a set the reader cannot reach the end of. The local
   node below is resolved by id and is deliberately not filtered — the attached
   device is reported whether or not it has been given a name.
+
+  **Direct messages are counted twice, and both numbers are right where they go.**
+  `total_direct_messages` is an archive figure and belongs in the Network Stats
+  block beside `total_messages`, which is what matters when thinking about the
+  collector's MAX_DIRECT_MESSAGES pruning. `drawn_direct_messages` is what the DM
+  list will draw and belongs next to the sidebar row, which is the number a reader
+  checks against what is on screen. They differ by the folded reactions. RxOnly's
+  `direct_message_counts` returns the same pair for the same reason.
+
+  `total_messages` needs no such twin: it is only ever an archive figure here, since
+  no list in this interface shows every channel's messages at once.
   """
   total_nodes = conn.execute(
     f"SELECT COUNT(*) AS count FROM nodes {_node_where(list_unnamed=list_unnamed)}"
@@ -239,16 +327,29 @@ def fetch_stats(
     total_direct_messages = conn.execute(
       "SELECT COUNT(*) AS count FROM direct_messages"
     ).fetchone()["count"]
+    drawn_direct_messages = conn.execute(
+      f"""
+      SELECT COUNT(*) AS count FROM direct_messages d
+      WHERE {_drawn_rows("direct_messages", "d")}
+      """
+    ).fetchone()["count"]
   else:
     total_direct_messages = 0
+    drawn_direct_messages = 0
 
+  # The same query `fetch_channels` runs, minus the name the sidebar rebuild needs
+  # and this refresh does not. Counted over drawn rows for the reason on
+  # `_drawn_rows`, and on the join for the reason there too: a channel whose rows
+  # are all folded reactions reports 0 rather than dropping out of the map.
   channel_counts = {
     row["channel_index"]: row["message_count"]
     for row in conn.execute(
-      """
+      f"""
       SELECT c.channel_index, COUNT(m.id) AS message_count
       FROM channels c
-      LEFT JOIN messages m ON c.channel_index = m.channel_index
+      LEFT JOIN messages m
+        ON c.channel_index = m.channel_index
+       AND {_drawn_rows("messages", "m")}
       GROUP BY c.channel_index
       """
     ).fetchall()
@@ -261,6 +362,7 @@ def fetch_stats(
       "total_messages": total_messages,
       "total_channels": total_channels,
       "total_direct_messages": total_direct_messages,
+      "drawn_direct_messages": drawn_direct_messages,
       "channel_counts": channel_counts,
     },
   }
@@ -328,6 +430,7 @@ def fetch_unread_channel_counts(
     LEFT JOIN messages m
       ON m.channel_index = c.channel_index
      {mine}
+     AND {_drawn_rows("messages", "m")}
      AND (p.channel_index IS NULL
           OR m.rx_time > p.rx_time
           OR (m.rx_time = p.rx_time AND m.id > p.row_id))
@@ -359,26 +462,30 @@ def fetch_unread_direct_count(
   device named, nothing can be claimed as yours, and a `!= NULL` comparison would
   silently exclude everything rather than nothing.
   """
+  # Aliased so `_drawn_rows` has something to qualify with, and because its EXISTS
+  # opens the same table again — an unqualified `reply_to` inside it would resolve
+  # to the subquery's own row rather than to the one being counted.
+  drawn = _drawn_rows("direct_messages", "d")
+
   mine = ""
   params: list[Any] = []
   if local_node_id is not None:
-    mine = "from_node != ?"
+    mine = "d.from_node != ? AND "
     params.append(local_node_id)
 
   if cursor is None:
-    where = f"WHERE {mine}" if mine else ""
     return conn.execute(
-      f"SELECT COUNT(*) AS count FROM direct_messages {where}", params
+      f"SELECT COUNT(*) AS count FROM direct_messages d WHERE {mine}{drawn}", params
     ).fetchone()["count"]
 
   rx_time, row_id = cursor
-  after = "(rx_time > ? OR (rx_time = ? AND id > ?))"
+  after = "(d.rx_time > ? OR (d.rx_time = ? AND d.id > ?))"
   params.extend((rx_time, rx_time, row_id))
 
   return conn.execute(
     f"""
-    SELECT COUNT(*) AS count FROM direct_messages
-    WHERE {f'{mine} AND ' if mine else ''}{after}
+    SELECT COUNT(*) AS count FROM direct_messages d
+    WHERE {mine}{drawn} AND {after}
     """,
     params,
   ).fetchone()["count"]
@@ -413,8 +520,14 @@ def fetch_conversations(
            pn.short_name AS peer_short_name,
            pn.long_name AS peer_long_name
     FROM (
+      -- Only rows the thread will draw, so a conversation's count describes the
+      -- list it opens — see `_drawn_rows`. Filtered here rather than outside so the
+      -- COUNT and the MAX are over one set; a peer whose every row folded away
+      -- would drop out, which cannot happen, because a reaction that has a parent
+      -- in the archive has it in this same conversation.
       SELECT {_PEER_OF_ROW} AS peer, rx_time
-      FROM direct_messages
+      FROM direct_messages m
+      WHERE {_drawn_rows("direct_messages", "m")}
     ) d
     -- The peer's own name, so a row can be rendered without a second read per
     -- conversation. Left, because a node that has never sent a NodeInfo is still
@@ -473,7 +586,12 @@ def fetch_unread_conversation_counts(
   rows = conn.execute(
     f"""
     WITH dm AS (
-      SELECT id, rx_time, from_node, {_PEER_OF_ROW} AS peer
+      -- `reply_to` and `emoji` ride along for `_drawn_rows` below. The CTE itself
+      -- stays unfiltered so `peers` is every conversation the archive holds, which
+      -- keeps this map a superset of the list `fetch_conversations` renders — a
+      -- spare entry is ignored, a missing one would be a conversation whose badge
+      -- silently fell back to zero.
+      SELECT id, rx_time, from_node, reply_to, emoji, {_PEER_OF_ROW} AS peer
       FROM direct_messages
     ),
     peers AS (SELECT DISTINCT peer FROM dm WHERE peer IS NOT NULL),
@@ -487,6 +605,11 @@ def fetch_unread_conversation_counts(
      -- in the CTE, so a conversation in which we have only ever spoken still
      -- appears here with a count of zero instead of dropping out of `peers`.
      AND m.from_node != ?
+     -- Nor a reaction the thread will fold into a pill, on the same join and for
+     -- the same reason. The EXISTS names the real table rather than `dm`: the
+     -- parent is looked for in the whole archive, exactly as the display half's
+     -- `reply_to_text` join is. See `_drawn_rows`.
+     AND {_drawn_rows("direct_messages", "m")}
      AND (pos.peer IS NULL
           OR m.rx_time > pos.rx_time
           OR (m.rx_time = pos.rx_time AND m.id > pos.row_id))

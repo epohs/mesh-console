@@ -84,6 +84,7 @@ from mesh_console.ui.widgets import (
   reconcile,
   striped,
 )
+from mesh_console.window import fetch_edge_window
 
 
 # mesh-link is an optional dependency, so this import is the install answering
@@ -3108,28 +3109,29 @@ class MeshConsoleApp(App):
 
 
   def load_window(self, *, newest: bool) -> Optional[list[dict[str, Any]]]:
-    page = self.read(
-      db.fetch_message_page,
-      self.current_is_dm,
-      self.current_channel_index,
+    """Load one edge of the channel and adopt it as the open window.
+
+    The fetch and the edge arithmetic are in `window.py`, which needs nothing
+    from the App but `read` and the scope. What stays here is adopting the six
+    fields it produces, and the row rebuild, which is the App's.
+    """
+    window = fetch_edge_window(
+      self.read,
+      is_dm=self.current_is_dm,
+      channel_index=self.current_channel_index,
       peer=self.current_peer,
       newest=newest,
       limit=self.page_size,
     )
-    if page is None:
+    if window is None:
       return None
 
-    self.messages = page["messages"]
-    self.has_more_older = page["meta"]["has_more_older"]
-    self.has_more_newer = page["meta"]["has_more_newer"]
-    self.oldest_cursor = page["meta"]["oldest"]
-    self.newest_cursor = page["meta"]["newest"]
-
-    if self.messages:
-      edge = self.messages[-1] if newest else self.messages[0]
-      self.resume_message_id = edge["message_id"]
-    else:
-      self.resume_message_id = None
+    self.messages = window.messages
+    self.has_more_older = window.has_more_older
+    self.has_more_newer = window.has_more_newer
+    self.oldest_cursor = window.oldest_cursor
+    self.newest_cursor = window.newest_cursor
+    self.resume_message_id = window.resume_message_id
 
     self.rebuild_rows()
 

@@ -2684,8 +2684,42 @@ class MeshConsoleApp(App):
     self.show_view(VIEW_DIRECT)
     self.set_breadcrumbs(Crumb("Dashboard", CRUMB_DASHBOARD), DIRECT_MESSAGES_LABEL)
     self.set_message_status(None)
+
+    # The list this view borrows was a channel until a moment ago, and two pieces of
+    # that channel are still on it: `start_row`, where the first arrow key would
+    # land, and `index`, wherever the cursor was left. Neither survives the swap as
+    # anything meaningful — both are row numbers into a list that is about to hold a
+    # handful of correspondents instead of a page of messages — and a stale `index`
+    # past the new end is exactly the cursor Textual walked off the list from, which
+    # is the crash this clears. Cleared *before* the rebuild so `rebuild_conversations`
+    # does not read the dead cursor as a correspondent worth restoring.
+    listing = self.query_one("#messages", MessageList)
+    listing.start_row = 0
+    listing.index = None
+
+    # The channel's rows are taken down *awaited*, not left to `reconcile`. Reconcile
+    # exists so a poll's redraw never shows an empty frame, but this is not a redraw —
+    # it is a view swap, and every row on the list is leaving whichever way it goes.
+    # What awaiting buys is a `children` list that means what it says: `remove()`
+    # queues a `Prune` and a row keeps answering to `children` until it is pumped, so
+    # a cursor placed by position now would be placed among ghosts and go stale the
+    # moment they leave — which is how the first fix for this crash reintroduced it.
+    await listing.remove_children()
+
     self.rebuild_conversations()
-    self.query_one("#messages", ListView).focus()
+
+    # The index opens with the newest conversation selected, unlike a channel, which
+    # opens with no cursor at all. A channel is read by scrolling and a highlight
+    # there would claim a choice the reader had not made; this list exists only to
+    # have one of its rows chosen, so the cursor starting on the likeliest row is
+    # the choice half-made for them. Found rather than assumed to be row zero, so
+    # the "No direct messages" row is never the thing selected.
+    for item in listing.children:
+      if isinstance(item, ConversationItem):
+        listing.index = listing.children.index(item)
+        break
+
+    listing.focus()
 
 
 

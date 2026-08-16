@@ -29,6 +29,17 @@ from typing import Any, Optional
 
 from mesh_link import (
   BROADCAST,
+  ERR_BAD_RESPONSE,
+  ERR_BUSY,
+  ERR_CHANNEL_NOT_TRACKED,
+  ERR_FRAME_TOO_LARGE,
+  ERR_INTERNAL,
+  ERR_INVALID_REQUEST,
+  ERR_SEND_FAILED,
+  ERR_TIMEOUT,
+  ERR_TX_DISABLED,
+  ERR_UNREACHABLE,
+  ERR_UNSUPPORTED_VERSION,
   ControlClient,
   ControlError,
   MAX_TEXT_BYTES,
@@ -57,35 +68,43 @@ PROBE_TIMEOUT = 2.0
 # away — that is a different failure with a different remedy, and it has its own
 # banner in the interface.
 #
+# **The keys are mesh_link's constants rather than the strings behind them**, so
+# a code renamed there fails this import instead of quietly dropping a sentence
+# into FALLBACK_ADVICE — which is a regression nothing would report, because the
+# fallback is a perfectly ordinary-looking message. Two of them, ERR_UNREACHABLE
+# and ERR_BAD_RESPONSE, are the client's own rather than the protocol's; they were
+# added to mesh_link's exports for exactly this, since a caller meets them as
+# often as it meets the rest.
+#
 # Re-read for direct messages rather than extended, which is what they needed:
 # every sentence below is still true of one, since none of them names a broadcast
-# or a channel except `channel_not_tracked` — and the collector skips that check
+# or a channel except ERR_CHANNEL_NOT_TRACKED — and the collector skips that check
 # entirely for a direct destination, so that code can no longer come back for one.
 # It stays in the table because it is still reachable for a channel message, and a
 # code with no sentence would fall through to FALLBACK_ADVICE.
 FAILURE_ADVICE = {
-  "unreachable": (
+  ERR_UNREACHABLE: (
     "No collector is listening. It has to be running with ENABLE_TX on, as the "
     "same user, for anything to send."
   ),
-  "tx_disabled": (
+  ERR_TX_DISABLED: (
     "The collector is running but will not transmit. ENABLE_TX is off there."
   ),
-  "channel_not_tracked": (
+  ERR_CHANNEL_NOT_TRACKED: (
     "The collector does not archive that channel, so it refuses to send on it — "
     "a message there would be visible to nobody."
   ),
-  "send_failed": "The radio refused the message. Nothing went out.",
-  "invalid_request": "The collector rejected the message as malformed.",
-  "busy": "The collector has more sends queued than it will hold. Try again.",
-  "timeout": "The collector accepted the message but did not report back in time.",
-  "unsupported_version": (
+  ERR_SEND_FAILED: "The radio refused the message. Nothing went out.",
+  ERR_INVALID_REQUEST: "The collector rejected the message as malformed.",
+  ERR_BUSY: "The collector has more sends queued than it will hold. Try again.",
+  ERR_TIMEOUT: "The collector accepted the message but did not report back in time.",
+  ERR_UNSUPPORTED_VERSION: (
     "This console and that collector disagree about the mesh-link protocol. "
     "Upgrade whichever is behind."
   ),
-  "frame_too_large": "The message was too large to send.",
-  "bad_response": "The collector answered with something this console cannot read.",
-  "internal": "The collector hit an error it could not describe.",
+  ERR_FRAME_TOO_LARGE: "The message was too large to send.",
+  ERR_BAD_RESPONSE: "The collector answered with something this console cannot read.",
+  ERR_INTERNAL: "The collector hit an error it could not describe.",
 }
 
 FALLBACK_ADVICE = "The collector refused the message."
@@ -236,7 +255,7 @@ class Sender:
       # Anything the client did not already turn into a ControlError. Reported as
       # unreachable because that is what it is: this end could not complete the
       # exchange, and nothing is known to have been sent.
-      raise SendFailed("unreachable", str(e)) from e
+      raise SendFailed(ERR_UNREACHABLE, str(e)) from e
 
 
 
@@ -283,7 +302,7 @@ class Sender:
     except ControlError as e:
       raise SendFailed(e.code, e.message) from e
     except OSError as e:
-      raise SendFailed("unreachable", str(e)) from e
+      raise SendFailed(ERR_UNREACHABLE, str(e)) from e
 
 
 

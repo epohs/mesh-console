@@ -49,15 +49,26 @@ from bisect import bisect_right
 from typing import Any, Optional
 
 
-# A reaction is one to three emoji. Four is a short message, and RxOnly draws the
-# line in the same place (`is_emoji_only`, messages.js:47).
+# The three numbers this module and RxOnly's messages.js both have to agree on, and
+# they agree by hand: neither imports the other and neither can.
+#
+# **Cited by name rather than by line number, which is the correction.** Two of these
+# used to point at `messages.js:177` and `messages.js:174`, and the numbers they named
+# were magic numbers sitting inside comparisons — so the citation could rot in two ways
+# at once, and had. Over there they are now `max_tapback_clusters`, `group_threshold`
+# and `max_pills`, declared together at the top of the module, and the testbed's
+# `test_the_tapback_thresholds_match_between_python_and_javascript` compares them to
+# these. Change one, change the others, and the test says which.
+
+# A reaction is one to three emoji. Four is a short message, and RxOnly's
+# `is_emoji_only` draws the line in the same place.
 MAX_TAPBACK_CLUSTERS = 3
 
 # More than this many of one emoji collapse into a single count pill, which is
-# then not a link to any one of them. Matches render_tapbacks, messages.js:177.
+# then not a link to any one of them. RxOnly's `render_tapbacks` does the same.
 GROUP_THRESHOLD = 5
 
-# Pills shown before the rest become "+N more". Matches max_pills, messages.js:174.
+# Pills shown before the rest become "+N more".
 MAX_PILLS = 10
 
 ZWJ = "‍"

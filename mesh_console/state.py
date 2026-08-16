@@ -313,8 +313,18 @@ class ReadPositions:
 
     Losing a read position is a smaller harm than dropping the user out of the
     interface, and this is the one place the console writes anything at all.
+
+    **The temporary file is cleaned up on the way out, and that matters because of
+    how often this runs.** `delete=False` is what allows the rename, so nothing
+    removes the temporary unless this does — and `flush_positions` calls this from
+    every poll, which is every ten seconds for as long as the console is open. A
+    failing `replace` that left its file behind would therefore not leave one file
+    behind, it would leave one every ten seconds, in the user's state directory,
+    for the rest of the session. On a full disk that is the failure making itself
+    worse.
     """
     path = state_file()
+    temp_path: Optional[Path] = None
 
     try:
       path.parent.mkdir(parents=True, exist_ok=True)
@@ -328,14 +338,25 @@ class ReadPositions:
         prefix=f".{STATE_FILE_NAME}.",
         delete=False,
       ) as handle:
+        temp_path = Path(handle.name)
         json.dump(self.to_dict(), handle, indent=2)
         handle.write("\n")
-        temp_path = Path(handle.name)
 
       temp_path.replace(path)
+      temp_path = None
 
     except OSError as e:
       logging.warning("Could not save read positions to %s: %s", path, e)
+
+    finally:
+      # Only ever set when the rename did not happen. Its own failure is ignored:
+      # this is already the error path, and a temporary file that cannot be removed
+      # is not worth a second warning about the first one.
+      if temp_path is not None:
+        try:
+          temp_path.unlink(missing_ok=True)
+        except OSError:
+          pass
 
 
 
